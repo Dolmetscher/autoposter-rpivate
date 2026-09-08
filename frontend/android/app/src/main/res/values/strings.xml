@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Autoposter</string>
+    <string name="title_activity_main">Autoposter</string>
+    <string name="package_name">io.autoposter.app</string>
+    <string name="custom_url_scheme">io.autoposter.app</string>
+</resources>

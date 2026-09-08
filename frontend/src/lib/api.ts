@@ -1,3 +1,7 @@
+// В веб-сборке пути относительные (прокси vite/nginx). В APK бэкенд задаётся
+// переменной VITE_API_BASE при сборке (напр. https://autoposter-api.onrender.com)
+export const API_BASE: string = (import.meta.env.VITE_API_BASE as string | undefined) ?? ''
+
 const TOKEN_KEY = 'autoposter_token'
 
 export function getToken(): string | null {
@@ -30,7 +34,7 @@ async function request<T>(method: string, path: string, body?: unknown,
       payload = JSON.stringify(body)
     }
   }
-  const resp = await fetch(path, { method, headers, body: payload })
+  const resp = await fetch(`${API_BASE}${path}`, { method, headers, body: payload })
   if (resp.status === 401 && !path.startsWith('/api/web/auth/')) {
     setToken(null)
     window.location.href = '/login'

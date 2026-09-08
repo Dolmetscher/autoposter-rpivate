@@ -16,3 +16,11 @@ frontend/dist/
 *.log
 post_payload.json
 .DS_Store
+
+# android build artifacts
+frontend/android/.gradle/
+frontend/android/build/
+frontend/android/app/build/
+frontend/android/local.properties
+frontend/android/capacitor-cordova-android-plugins/
+*.apk

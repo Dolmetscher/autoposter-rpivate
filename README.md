@@ -38,6 +38,46 @@
 Facebook/X/Pinterest/Threads/LinkedIn/WordPress/Viber/WhatsApp/Rutube/Яппи/Тамблер/Вайбс/Макс/
 Мой Мир — заявлены в UI, адаптеры добавляются по тому же интерфейсу `SocialAdapter`.
 
+## Приложение для Android (Capacitor)
+
+Фронтенд оборачивается в нативное приложение тем же способом, что и SPA: веб-сборка
+кладётся в WebView (Capacitor 6), все данные ходят по API на бэкенд.
+
+### Что нужно
+- JDK 17 и Android SDK (как у проектов english-app/serials-app: `.tools/jdk-17...`,
+  `.tools/android-sdk`); пути прописываются в `frontend/android/local.properties`.
+- Телефон/эмулятор в той же сети, что и бэкенд (для теста), либо задеплоенный HTTPS-бэкенд.
+
+### Сборка APK
+```bash
+cd frontend
+
+# 1. собрать веб-бандл с адресом бэкенда и синхронизировать в Android-проект
+#    локальный тест (телефон в одной Wi-Fi сети с ПК):
+set VITE_API_BASE=http://192.168.1.106:8000        # Windows cmd (ваш LAN IP)
+npm run build:android
+
+#    продакшен (задеплоенный бэкенд):
+#    set VITE_API_BASE=https://autoposter-api.onrender.com  → npm run build:android
+
+# 2. собрать APK
+npm run android:apk
+# → frontend/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Проще управлять из Android Studio: `npm run android:open` (эмулятор, иконки, подпись).
+
+### Важные детали
+- `VITE_API_BASE` вшивается в бандл на шаге сборки — при смене адреса бэкенда
+  пересоберите APK (`npm run build:android && npm run android:apk`).
+- Для теста по HTTP в манифесте включён `usesCleartextTraffic="true"`.
+  В релизе с HTTPS-бэкендом эту строку можно убрать из
+  `android/app/src/main/AndroidManifest.xml`.
+- Релиз-подпись: `android/app/build.gradle` → signingConfigs, либо `npm run android:apk:release`
+  после настройки keystore.
+- CORS включён на бэкенде (`allow_origins=["*"]`) — WebView-оригин `https://localhost`
+  проходит без дополнительных настроек.
+
 ## Быстрый старт (локально, без docker)
 
 ```bash

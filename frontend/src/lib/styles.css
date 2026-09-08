@@ -167,6 +167,32 @@ tr:last-child td { border-bottom: none; }
 .editor-grid { display: grid; grid-template-columns: 1fr 320px; gap: 18px; align-items: start; }
 @media (max-width: 980px) { .editor-grid { grid-template-columns: 1fr; } }
 
+/* мобильная вёрстка (Android/iOS через Capacitor, узкие экраны) */
+@media (max-width: 760px) {
+  .app { flex-direction: column; }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    padding: 6px 8px;
+    gap: 2px;
+  }
+  .sidebar .logo { padding: 6px 10px; font-size: 15px; white-space: nowrap; }
+  .sidebar a { padding: 8px 10px; white-space: nowrap; font-size: 13px; }
+  .sidebar a span { display: none; }
+  .sidebar .spacer { flex: 0; }
+  .main { padding: 16px 14px; }
+  .login-card { width: 92%; padding: 24px; }
+  .grid.c2 { grid-template-columns: 1fr; }
+  .calendar { gap: 3px; }
+  .cal-cell { min-height: 64px; padding: 3px; font-size: 10px; }
+}
+
 .media-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .thumb {
   width: 74px; height: 74px;
