@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 
 import httpx
 
 from ..config import settings
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
+from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
 
 
 class OKAdapter(SocialAdapter):
@@ -106,14 +107,16 @@ class OKAdapter(SocialAdapter):
             upload_url = up.get("upload_url")
             files = {}
             for i, m in enumerate(photos):
-                files[f"pic{i + 1}"] = (m.name, open(media_abs_path(m), "rb"))
+                bio = io.BytesIO(await read_media_bytes(m))
+                bio.name = m.name
+                files[f"pic{i + 1}"] = (m.name, bio)
             try:
                 async with httpx.AsyncClient(timeout=300) as client:
                     r = await client.post(upload_url, files=files)
                 data = r.json()
             finally:
-                for _, fh in files.values():
-                    fh.close()
+                for _, bio in files.values():
+                    bio.close()
             photo_list = []
             for pid, pdata in (data.get("photos") or {}).items():
                 token = (pdata.get("token") or pid)
@@ -127,9 +130,10 @@ class OKAdapter(SocialAdapter):
             if gid:
                 params["gid"] = gid
             up = await self.call("video.getUploadUrl", creds, params)
+            bio = io.BytesIO(await read_media_bytes(videos[0]))
+            bio.name = videos[0].name
             async with httpx.AsyncClient(timeout=600) as client:
-                with open(media_abs_path(videos[0]), "rb") as f:
-                    r = await client.post(up["upload_url"], files={"file": (videos[0].name, f)})
+                r = await client.post(up["upload_url"], files={"file": (videos[0].name, bio)})
             vid = r.json().get("video_id") or ""
             if vid:
                 attachments.append({"type": "video", "list": [{"id": vid}]})
@@ -150,8 +154,3 @@ class OKAdapter(SocialAdapter):
         await self.call("mediatopic.delete", page.account.credentials,
                         {"topic_id": external_id})
         return True
-
-
-def media_abs_path(media) -> str:  # noqa: ANN001
-    from ..services.files import storage_path
-    return str(storage_path(media.file_path))

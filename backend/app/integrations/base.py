@@ -46,10 +46,17 @@ class PublishContent:
     media: list = field(default_factory=list)      # orm MediaFile (photo/video)
     documents: list = field(default_factory=list)  # orm MediaFile (document)
     settings: dict = field(default_factory=dict)
-    media_base_url: str = ""  # публичный base URL для сетей, качающих файл по ссылке
+    media_base_url: str = ""  # устарело: публичный URL даёт services.storage.public_url
 
     def public_url(self, file_path: str) -> str:
-        return f"{self.media_base_url.rstrip('/')}/media/{file_path.lstrip('/')}"
+        from ..services import storage
+        return storage.public_url(file_path)
+
+
+async def read_media_bytes(media) -> bytes:  # noqa: ANN001
+    """Байты медиафайла из хранилища (local или S3) — для загрузки в соцсеть."""
+    from ..services import storage
+    return await storage.read_file(media.file_path)
 
 
 class SocialAdapter(ABC):

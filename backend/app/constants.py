@@ -75,6 +75,9 @@ PLANNED_SOURCES: dict[int, SourceInfo] = {
 
 SOURCE_BY_SLUG = {s.slug: s for s in list(SOURCES.values()) + list(PLANNED_SOURCES.values())}
 
+# Псевдо-источник для кросспостинга (не соцсеть — аккаунт не подключается)
+SOURCE_RSS = 30
+
 
 def get_source(source_id: int) -> SourceInfo | None:
     return SOURCES.get(source_id) or PLANNED_SOURCES.get(source_id)

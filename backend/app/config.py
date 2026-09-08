@@ -23,6 +23,22 @@ class Settings(BaseSettings):
     # публичный адрес сервиса: используется адаптерами, которым нужны общедоступные URL медиа
     public_base_url: str = "http://localhost:8000"
 
+    # хранилище медиа: local (диск) | s3 (любой S3-совместимый: MinIO, Yandex Object Storage...)
+    media_storage: str = "local"
+    s3_endpoint_url: str = ""
+    s3_bucket: str = ""
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    s3_region: str = "us-east-1"
+    s3_public_base: str = ""  # если бакет публичный: https://cdn.example.com (без bucket в пути — как настроено)
+    s3_public_style: str = "path"  # path → base/bucket/key; virtual → base/key
+
+    # мастер-ключ шифрования токенов соцсетей; пусто = производный от secret_key
+    credentials_secret: str = ""
+
+    # опрос Telegram-бота-ассистента (сек)
+    tg_bot_poll_seconds: int = 6
+
     rows_limit: int = 20
     max_media_size_mb: int = 100
     crosspost_max_items_per_poll: int = 5

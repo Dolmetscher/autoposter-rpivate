@@ -217,6 +217,11 @@ async def publish_post_now(s: AsyncSession, post: Post) -> Post:
         await publish_target(s, post, target)
     finalize_post_status(post)
     await s.flush()
+    try:
+        from . import notify
+        await notify.notify_publish_result(s, post)
+    except Exception:
+        log.warning("notify hook failed", exc_info=True)
     return post
 
 

@@ -1,16 +1,16 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...config import settings
 from ...db import get_session
 from ...deps import get_current_user
 from ...models import MediaFile, User
 from ...schemas import MediaOut
 from ...services import files as files_service
+from ...services import storage
 from ...util import utcnow
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -81,11 +81,10 @@ async def delete_file(file_id: str, user: User = Depends(get_current_user),
     mf = await s.get(MediaFile, file_id)
     if not mf or mf.user_id != user.id:
         raise HTTPException(404, "Файл не найден")
-    path = files_service.storage_path(mf.file_path)
     await s.delete(mf)
     await s.commit()
     try:
-        path.unlink(missing_ok=True)
+        await storage.delete_file(mf.file_path)
     except OSError:
         pass
     return {"success": True}
@@ -97,7 +96,10 @@ async def raw_file(file_id: str, user: User = Depends(get_current_user),
     mf = await s.get(MediaFile, file_id)
     if not mf or mf.user_id != user.id:
         raise HTTPException(404, "Файл не найден")
-    path = files_service.storage_path(mf.file_path)
-    if not path.exists():
-        raise HTTPException(404, "Файл отсутствует на диске")
-    return FileResponse(path, filename=mf.name)
+    if not await storage.file_exists(mf.file_path):
+        raise HTTPException(404, "Файл отсутствует в хранилище")
+    data = await storage.read_file(mf.file_path)
+    media_type = "image/png" if mf.file_path.endswith(".png") else \
+        "image/jpeg" if mf.file_path.endswith((".jpg", ".jpeg")) else \
+        "video/mp4" if mf.file_path.endswith(".mp4") else "application/octet-stream"
+    return Response(content=data, media_type=media_type)

@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models import MediaFile
-from ..util import gen_file_id, today_folder
+from ..util import gen_file_id, today_folder, utcnow
+from . import storage
 
 PHOTO_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
@@ -23,10 +24,6 @@ def detect_type(filename: str, content_type: str = "") -> str:
     return "document"
 
 
-def storage_path(relative: str) -> Path:
-    return Path(settings.storage_dir) / relative
-
-
 async def save_upload(user_id: int, file: UploadFile, s: AsyncSession,
                       file_id_hint: str | None = None,
                       force_type: str | None = None) -> MediaFile:
@@ -34,28 +31,24 @@ async def save_upload(user_id: int, file: UploadFile, s: AsyncSession,
     ftype = force_type or detect_type(file.filename, file.content_type or "")
     folder = today_folder()
     ext = Path(file.filename or "").suffix.lower() or mimetypes.guess_extension(file.content_type or "") or ".bin"
-    rel_dir = f"posts/{TYPE_DIRS[ftype]}/{folder}"
-    rel_path = f"{rel_dir}/{file_id}{ext}"
-
-    dest = storage_path(rel_path)
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    rel_path = f"posts/{TYPE_DIRS[ftype]}/{folder}/{file_id}{ext}"
 
     max_bytes = settings.max_media_size_mb * 1024 * 1024
+    chunks: list[bytes] = []
     size = 0
-    with open(dest, "wb") as out:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-            if size > max_bytes:
-                out.close()
-                dest.unlink(missing_ok=True)
-                raise HTTPException(413, f"Файл больше {settings.max_media_size_mb} МБ")
-            out.write(chunk)
+    while chunk := await file.read(1024 * 1024):
+        size += len(chunk)
+        if size > max_bytes:
+            raise HTTPException(413, f"Файл больше {settings.max_media_size_mb} МБ")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    await storage.save_file(rel_path, data)
 
     mf = MediaFile(
         id=file_id, user_id=user_id, type=ftype,
         name=Path(file.filename or file_id).name,
         folder=folder, file_path=rel_path, size=size,
-        updated_date=str(int(dest.stat().st_mtime)),
+        updated_date=str(int(utcnow().timestamp())),
     )
     s.add(mf)
     await s.flush()
@@ -97,36 +90,36 @@ async def download_from_url(user_id: int, url: str, kind: str, s: AsyncSession) 
 
     folder = today_folder()
     digest = hashlib.md5(url.encode()).hexdigest()[:12]
-    rel_dir = f"posts/{TYPE_DIRS[kind]}/{folder}"
-    rel_path = f"{rel_dir}/copied_{digest}{ext}"
-    dest = storage_path(rel_path)
-    if dest.exists():
+    rel_path = f"posts/{TYPE_DIRS[kind]}/{folder}/copied_{digest}{ext}"
+
+    if await storage.file_exists(rel_path):
         existing = (await s.execute(
             MediaFile.__table__.select().where(MediaFile.file_path == rel_path))).first()
         if existing:
             return await s.get(MediaFile, existing.id)
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
     max_bytes = settings.crosspost_max_media_mb * 1024 * 1024
-    size = 0
     try:
         async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
             async with client.stream("GET", url) as resp:
                 resp.raise_for_status()
-                with open(dest, "wb") as out:
-                    async for chunk in resp.aiter_bytes(1024 * 256):
-                        size += len(chunk)
-                        if size > max_bytes:
-                            raise HTTPException(413, f"Медиа из источника больше {settings.crosspost_max_media_mb} МБ")
-                        out.write(chunk)
-    except (httpx.HTTPError, OSError) as e:
-        dest.unlink(missing_ok=True)
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in resp.aiter_bytes(1024 * 256):
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise ValueError(
+                            f"Медиа из источника больше {settings.crosspost_max_media_mb} МБ")
+                    chunks.append(chunk)
+    except httpx.HTTPError as e:
         raise ValueError(f"Не удалось скачать медиа: {e}") from e
+    data = b"".join(chunks)
+    await storage.save_file(rel_path, data)
 
     mf = MediaFile(
         id=gen_file_id(), user_id=user_id, type=kind,
-        name=dest.name, folder=folder, file_path=rel_path, size=size,
-        external_url=url, updated_date=str(int(dest.stat().st_mtime)),
+        name=Path(rel_path).name, folder=folder, file_path=rel_path, size=size,
+        external_url=url, updated_date=str(int(utcnow().timestamp())),
     )
     s.add(mf)
     await s.flush()

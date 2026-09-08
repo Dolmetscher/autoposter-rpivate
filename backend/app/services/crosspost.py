@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..integrations.base import AdapterError, SourceItem
 from ..integrations.registry import get_adapter
+from ..integrations.rss import fetch_rss_items
+from ..constants import SOURCE_RSS
 from ..config import settings
 from ..models import (CrosspostSeen, CrosspostSource, MediaFile, SocialAccount,
                       User)
@@ -74,13 +76,21 @@ async def _is_seen(session: AsyncSession, src: CrosspostSource, external_id: str
 
 async def poll_source(session: AsyncSession, src: CrosspostSource) -> int:
     user = await session.get(User, src.user_id)
-    adapter = get_adapter(src.source_id)
-    account = await _account_for(session, src.user_id, src.source_id)
+    if src.source_id == SOURCE_RSS:
+        async def fetch(ref, limit, account=None):  # noqa: ANN001
+            return await fetch_rss_items(ref, limit)
+        fetcher = fetch
+    else:
+        adapter = get_adapter(src.source_id)
+        account = await _account_for(session, src.user_id, src.source_id)
+
+        async def fetch(ref, limit, account=None):  # noqa: ANN001
+            return await adapter.fetch_source_items(ref, limit, account=account)
+        fetcher = fetch
     try:
-        items = await adapter.fetch_source_items(src.source_ref,
-                                                 limit=settings.crosspost_max_items_per_poll * 2,
-                                                 account=account)
-    except AdapterError as e:
+        items = await fetcher(src.source_ref,
+                              settings.crosspost_max_items_per_poll * 2)
+    except (AdapterError, ValueError) as e:
         publish_service.add_log(session, src.user_id,
                                 f"Кросспостинг «{src.name or src.source_ref}»: {e}",
                                 "error", source_id=src.source_id)

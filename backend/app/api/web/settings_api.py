@@ -8,22 +8,41 @@ from ...deps import get_current_user
 from ...models import ApiToken, User
 from ...schemas import ApiTokenIn, LlmConfigIn
 from ...security import generate_api_token, hash_api_token
+from ...services import notify as notify_service
 from ...util import utcnow
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
-@router.get("")
-async def get_settings(user: User = Depends(get_current_user)):
-    llm = dict(user.llm_config or {})
-    if llm.get("api_key"):
-        llm["api_key"] = "***"
-    return {"timezone": user.timezone, "llm_config": llm}
+class NotifyIn(BaseModel):
+    bot_token: str = ""
+    chat_id: str | int | None = ""
+    on_error: bool = True
+    on_success: bool = False
+    inbox_page_ids: list[int] = []
 
 
 class SettingsIn(BaseModel):
     timezone: str | None = None
     llm_config: LlmConfigIn | None = None
+    notify: NotifyIn | None = None
+
+
+def _mask_notify(cfg: dict) -> dict:
+    out = dict(cfg or {})
+    if out.get("bot_token"):
+        out["bot_token"] = "***"
+    return out
+
+
+@router.get("")
+async def get_settings(user: User = Depends(get_current_user),
+                       s: AsyncSession = Depends(get_session)):
+    llm = dict(user.llm_config or {})
+    if llm.get("api_key"):
+        llm["api_key"] = "***"
+    notify = _mask_notify(await notify_service.get_settings(s, user.id))
+    return {"timezone": user.timezone, "llm_config": llm, "notify": notify}
 
 
 @router.put("")
@@ -42,11 +61,33 @@ async def update_settings(payload: SettingsIn, user: User = Depends(get_current_
         if new.get("api_key") == "***":
             new["api_key"] = cfg.get("api_key", "")
         user.llm_config = new
+    if payload.notify is not None:
+        current = await notify_service.get_settings(s, user.id)
+        new = payload.notify.model_dump()
+        if new.get("bot_token") == "***":
+            new["bot_token"] = current.get("bot_token", "")
+        # chat_id привязывается только через /start в боте — из payload не меняем
+        new["chat_id"] = current.get("chat_id", "")
+        await notify_service.save_settings(s, user.id, new)
     await s.commit()
     llm = dict(user.llm_config or {})
     if llm.get("api_key"):
         llm["api_key"] = "***"
-    return {"timezone": user.timezone, "llm_config": llm}
+    notify = _mask_notify(await notify_service.get_settings(s, user.id))
+    return {"timezone": user.timezone, "llm_config": llm, "notify": notify}
+
+
+@router.post("/notify/test")
+async def test_notify(user: User = Depends(get_current_user),
+                      s: AsyncSession = Depends(get_session)):
+    cfg = await notify_service.get_settings(s, user.id)
+    if not cfg.get("bot_token") or not cfg.get("chat_id"):
+        raise HTTPException(400, "Бот не настроен: добавьте токен и отправьте /start боту")
+    sent, err = await notify_service.send(cfg["bot_token"], cfg["chat_id"],
+                                          "✅ Autoposter: тестовое уведомление")
+    if not sent:
+        raise HTTPException(400, f"Не отправлено: {err}")
+    return {"success": True}
 
 
 @router.get("/tokens")

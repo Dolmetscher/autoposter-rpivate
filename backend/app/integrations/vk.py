@@ -7,7 +7,7 @@ import re
 import httpx
 
 from ..config import settings
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem
+from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes
 
 API = "https://api.vk.com/method"
 V = "5.199"
@@ -86,7 +86,7 @@ class VKAdapter(SocialAdapter):
             params["group_id"] = group_id
         r = await client.post(f"{API}/photos.getWallUploadServer", data=params)
         url = self._unwrap("photos.getWallUploadServer", r)
-        up = await client.post(url, files={"photo": (media.name, open(media_abs_path(media), "rb"))})
+        up = await client.post(url, files={"photo": (media.name, await read_media_bytes(media))})
         saved = await client.post(f"{API}/photos.saveWallPhoto", data={
             **params, **{k: str(v) for k, v in up.json().items()
                          if k in ("server", "photo", "hash")}})
@@ -102,8 +102,8 @@ class VKAdapter(SocialAdapter):
             params["group_id"] = group_id
         r = await client.post(f"{API}/video.save", data=params)
         info = self._unwrap("video.save", r)
-        with open(media_abs_path(media), "rb") as f:
-            await client.post(info["upload_url"], files={"video_file": (media.name, f)})
+        await client.post(info["upload_url"],
+                          files={"video_file": (media.name, await read_media_bytes(media))})
         return f"video{info['owner_id']}_{info['video_id']}"
 
     async def _upload_doc(self, client: httpx.AsyncClient, token: str, group_id: int | None,
@@ -113,7 +113,7 @@ class VKAdapter(SocialAdapter):
             params["group_id"] = group_id
         r = await client.post(f"{API}/docs.getWallUploadServer", data=params)
         url = self._unwrap("docs.getWallUploadServer", r)
-        up = await client.post(url, files={"file": (media.name, open(media_abs_path(media), "rb"))})
+        up = await client.post(url, files={"file": (media.name, await read_media_bytes(media))})
         saved = await client.post(f"{API}/docs.save", data={
             **params, **{k: str(v) for k, v in up.json().items()
                          if k in ("file", "title", "tags")}})
@@ -137,7 +137,7 @@ class VKAdapter(SocialAdapter):
         r = await client.post(f"{API}/{method}", data=params)
         url = self._unwrap(method, r)
         field = "photo" if media.type == "photo" else "video_file"
-        up = await client.post(url, files={field: (media.name, open(media_abs_path(media), "rb"))})
+        up = await client.post(url, files={field: (media.name, await read_media_bytes(media))})
         data = up.json()
         items = (data.get("response") or {}).get("items") or []
         if not items:
@@ -244,8 +244,3 @@ class VKAdapter(SocialAdapter):
                     text=text, media=media,
                     url=f"https://vk.com/wall{p.get('owner_id', owner)}_{p['id']}"))
         return items
-
-
-def media_abs_path(media) -> str:  # noqa: ANN001
-    from ..services.files import storage_path
-    return str(storage_path(media.file_path))

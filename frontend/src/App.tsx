@@ -71,7 +71,7 @@ function Shell() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/crosspost" element={<Crosspost sources={sources} accounts={accounts} />} />
-        <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/settings" element={<SettingsPage accounts={accounts} />} />
       </Route>
     </Routes>
   )

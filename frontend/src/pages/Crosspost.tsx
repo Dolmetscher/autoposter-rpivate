@@ -17,7 +17,16 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
     .then((d) => setItems(d.list)).catch(() => {})
   useEffect(() => { load() }, [])
 
-  const crosspostable = sources.filter((s) => [1, 9, 17].includes(s.id))
+  const rssSource: SourceInfo = {
+    id: 30, slug: 'rss', name: 'RSS-лента', implemented: true, experimental: false,
+    oauth: false, capabilities: [], color: '#f26522',
+  }
+  const crosspostable = [...sources.filter((s) => [1, 9, 17].includes(s.id)), rssSource]
+  const refHint = (sid: number) =>
+    sid === 1 ? 'id группы ВК, напр. -12345' :
+    sid === 9 ? '@канал или t.me/канал' :
+    sid === 17 ? 'channel_id YouTube (UC…)' :
+    'URL RSS-фида, напр. https://blog.example/feed'
   const allPages = useMemo(
     () => accounts.flatMap((a) => a.pages.map((p) => ({ ...p, src: a.source_id }))),
     [accounts],
@@ -82,9 +91,7 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
               </select>
             </label>
             <label className="field">
-              Источник ({form.source_id === 1 ? 'id группы ВК, напр. -12345' :
-                         form.source_id === 9 ? '@канал или t.me/канал' :
-                         'channel_id YouTube (UC…)'})
+              Источник ({refHint(form.source_id)})
               <input value={form.source_ref} onChange={(e) => setForm({ ...form, source_ref: e.target.value })} />
             </label>
             <label className="field">
@@ -143,10 +150,10 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
               <tr key={x.id}>
                 <td>
                   <div className="row" style={{ gap: 6 }}>
-                    <span className="dot" style={{ background: sourceColor(sources, x.source_id) }} />
+                    <span className="dot" style={{ background: x.source_id === 30 ? '#f26522' : sourceColor(sources, x.source_id) }} />
                     <strong>{x.name || x.source_ref}</strong>
                   </div>
-                  <div className="hint">{sourceName(sources, x.source_id)} · {x.source_ref}</div>
+                  <div className="hint">{x.source_id === 30 ? 'RSS-лента' : sourceName(sources, x.source_id)} · {x.source_ref}</div>
                 </td>
                 <td>
                   <div className="hint">

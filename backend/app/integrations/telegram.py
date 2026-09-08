@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 
 import httpx
 
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem
+from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes
+
+
+def _named(data: bytes, name: str) -> io.BytesIO:
+    bio = io.BytesIO(data)
+    bio.name = name
+    return bio
+
 
 class TelegramAdapter(SocialAdapter):
     source_id = 9
@@ -100,63 +108,49 @@ class TelegramAdapter(SocialAdapter):
         chat = page.social_page_id
         base = f"https://api.telegram.org/bot{token}"
         caption = (content.text or "")[:1024]
-        opened = []  # держим дескрипторы открытыми до конца запроса
-        try:
-            for m in content.media:
-                opened.append((m, open(media_abs_path(m), "rb")))
-            for d in content.documents:
-                opened.append((d, open(media_abs_path(d), "rb")))
+        items = [( _named(await read_media_bytes(m), m.name), m.type) for m in content.media]
+        items += [(_named(await read_media_bytes(d), d.name), "document") for d in content.documents]
 
-            def file_tuple(item):
-                media, fh = item
-                return media.name, fh
-
-            async with httpx.AsyncClient(timeout=300) as client:
-                message_id = None
-                items = list(opened)
-                if items:
-                    if len(items) == 1:
-                        media, _ = items[0]
-                        if media.type == "photo":
-                            method, field = "sendPhoto", "photo"
-                        elif media.type == "video":
-                            method, field = "sendVideo", "video"
-                        else:
-                            method, field = "sendDocument", "document"
-                        r = await client.post(f"{base}/{method}",
-                                              data={"chat_id": chat, "caption": caption},
-                                              files={field: file_tuple(items[0])})
-                        message_id = self._tg_ok(method, r)["message_id"]
+        async with httpx.AsyncClient(timeout=300) as client:
+            message_id = None
+            if items:
+                if len(items) == 1:
+                    bio, mtype = items[0]
+                    if mtype == "photo":
+                        method, field = "sendPhoto", "photo"
+                    elif mtype == "video":
+                        method, field = "sendVideo", "video"
                     else:
-                        media_group = []
-                        for i, (media, _) in enumerate(items):
-                            entry = {"type": media.type if media.type in ("photo", "video") else "document",
-                                     "media": f"attach://file{i}"}
-                            if i == 0 and caption:
-                                entry["caption"] = caption
-                            media_group.append(entry)
-                        r = await client.post(f"{base}/sendMediaGroup",
-                                              data={"chat_id": chat,
-                                                    "media": _json.dumps(media_group, ensure_ascii=False)},
-                                              files={f"file{i}": file_tuple(it) for i, it in enumerate(items)})
-                        res = self._tg_ok("sendMediaGroup", r)
-                        message_id = res[0]["message_id"]
+                        method, field = "sendDocument", "document"
+                    r = await client.post(f"{base}/{method}",
+                                          data={"chat_id": chat, "caption": caption},
+                                          files={field: (bio.name, bio)})
+                    message_id = self._tg_ok(method, r)["message_id"]
                 else:
-                    if not content.text:
-                        raise AdapterError("Telegram: пустой пост")
-                    r = await client.post(f"{base}/sendMessage", json={
-                        "chat_id": chat, "text": content.text,
-                    })
-                    message_id = self._tg_ok("sendMessage", r)["message_id"]
-                if st.get("pin_post") and message_id:
-                    await client.post(f"{base}/pinChatMessage",
-                                      data={"chat_id": chat, "message_id": message_id})
-        finally:
-            for _, fh in opened:
-                try:
-                    fh.close()
-                except OSError:
-                    pass
+                    media_group = []
+                    for i, (bio, mtype) in enumerate(items):
+                        entry = {"type": mtype if mtype in ("photo", "video") else "document",
+                                 "media": f"attach://file{i}"}
+                        if i == 0 and caption:
+                            entry["caption"] = caption
+                        media_group.append(entry)
+                    r = await client.post(f"{base}/sendMediaGroup",
+                                          data={"chat_id": chat,
+                                                "media": _json.dumps(media_group, ensure_ascii=False)},
+                                          files={f"file{i}": (bio.name, bio)
+                                                 for i, (bio, _) in enumerate(items)})
+                    res = self._tg_ok("sendMediaGroup", r)
+                    message_id = res[0]["message_id"]
+            else:
+                if not content.text:
+                    raise AdapterError("Telegram: пустой пост")
+                r = await client.post(f"{base}/sendMessage", json={
+                    "chat_id": chat, "text": content.text,
+                })
+                message_id = self._tg_ok("sendMessage", r)["message_id"]
+            if st.get("pin_post") and message_id:
+                await client.post(f"{base}/pinChatMessage",
+                                  data={"chat_id": chat, "message_id": message_id})
         ext = f"{chat}_{message_id}"
         name = page.social_page_name or ""
         url = (f"https://t.me/{name.lstrip('@')}/{message_id}" if name.startswith("@")
@@ -170,6 +164,9 @@ class TelegramAdapter(SocialAdapter):
         if not (api_id and api_hash and session):
             raise AdapterError("Telegram: аккаунт не настроен (api_id/api_hash/session)")
 
+        files = [(_named(await read_media_bytes(m), m.name), m.type) for m in content.media]
+        files += [(_named(await read_media_bytes(d), d.name), "document") for d in content.documents]
+
         def work():
             from telethon import TelegramClient
             from telethon.sessions import StringSession
@@ -177,15 +174,14 @@ class TelegramAdapter(SocialAdapter):
             st = content.settings or {}
             with TelegramClient(StringSession(session), api_id, api_hash) as c:
                 entity = c.get_entity(int(page.social_page_id))
-                paths = [media_abs_path(m) for m in content.media]
-                doc_paths = [media_abs_path(d) for d in content.documents]
                 if st.get("publish_as_story"):
-                    if not paths:
+                    if not files:
                         raise AdapterError("Telegram истории: нужен файл")
-                    return _send_story(c, entity, paths[0], content.text or ""), None
+                    bio, ftype = files[0]
+                    return _send_story(c, entity, bio, ftype, content.text or ""), None
                 msg_id = None
-                if paths or doc_paths:
-                    res = c.send_file(entity, paths + doc_paths,
+                if files:
+                    res = c.send_file(entity, [bio for bio, _ in files],
                                       caption=content.text or None, file_caption=False)
                     msg_id = getattr(res, "id", None) or res[0].id if isinstance(res, list) else res.id
                 elif content.text:
@@ -269,17 +265,15 @@ class TelegramAdapter(SocialAdapter):
         return items
 
 
-def _send_story(client, entity, path: str, caption: str):  # noqa: ANN001
+def _send_story(client, entity, bio: io.BytesIO, ftype: str, caption: str):  # noqa: ANN001
     """История в Telegram через Telethon (raw API)."""
     import os
 
     from telethon.tl import types
     from telethon.tl.functions.stories import SendStoryRequest
 
-    path = path.replace("\\", "/")
-    lower = path.lower()
-    uploaded = client.upload_file(path, file_name=os.path.basename(path))
-    if lower.endswith((".jpg", ".jpeg", ".png", ".webp")):
+    uploaded = client.upload_file(bio, file_name=bio.name)
+    if ftype == "photo":
         media = types.InputMediaUploadedPhoto(file=uploaded)
     else:
         media = types.InputMediaUploadedDocument(
@@ -289,8 +283,3 @@ def _send_story(client, entity, path: str, caption: str):  # noqa: ANN001
         peer=entity, media=media, random_id=int.from_bytes(os.urandom(8), "big"),
         privacy=[types.InputPrivacyValueAllowAllRequest()], message=caption or None))
     return getattr(result, "id", 0)
-
-
-def media_abs_path(media) -> str:  # noqa: ANN001
-    from ..services.files import storage_path
-    return str(storage_path(media.file_path))

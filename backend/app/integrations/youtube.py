@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import httpx
 
 from ..config import settings
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem
+from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes
 
 
 class YouTubeAdapter(SocialAdapter):
@@ -82,9 +82,8 @@ class YouTubeAdapter(SocialAdapter):
             "status": {"privacyStatus": st.get("youtube_privacy", "public"),
                        "selfDeclaredMadeForKids": False},
         }
-        media_path = media_abs_path(video)
-        import os
-        size = os.path.getsize(media_path)
+        data = await read_media_bytes(video)
+        size = len(data)
 
         async with httpx.AsyncClient(timeout=600) as client:
             init = await client.post(
@@ -97,8 +96,7 @@ class YouTubeAdapter(SocialAdapter):
                 json=metadata)
             if init.status_code >= 300:
                 raise AdapterError(f"YouTube init: {init.text[:300]}")
-            with open(media_path, "rb") as f:
-                upload = await client.put(init.headers["Location"], content=f)
+            upload = await client.put(init.headers["Location"], content=data)
         if upload.status_code >= 300:
             raise AdapterError(f"YouTube upload: {upload.text[:300]}")
         vid = upload.json()["id"]
@@ -132,13 +130,8 @@ class YouTubeAdapter(SocialAdapter):
             published = re.search(r"<published>([^<]+)</published>", e)
             if not vid:
                 continue
-            items.append(SourceItem(
+                items.append(SourceItem(
                 external_id=vid.group(1),
                 text=(title.group(1) if title else "") + f"\nhttps://youtu.be/{vid.group(1)}",
                 url=f"https://youtu.be/{vid.group(1)}"))
         return items
-
-
-def media_abs_path(media) -> str:  # noqa: ANN001
-    from ..services.files import storage_path
-    return str(storage_path(media.file_path))
