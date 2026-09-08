@@ -1,0 +1,42 @@
+# Render Blueprint: backend как web service (free), frontend как static site (free).
+# Деплой: Render → New → Blueprint → укажите репозиторий.
+# Postgres берите внешний бесплатный (Neon) — бесплатный Postgres от Render удаляется через 30 дней.
+services:
+  - type: web
+    name: autoposter-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: dummy  # замените на syncVar или впишите значение Neon в дашборде
+      - key: SCHEDULER_MODE
+        value: inline
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PUBLIC_BASE_URL
+        value: https://autoposter-api.onrender.com  # замените на свой URL сервиса
+      - key: PYTHON_VERSION
+        value: 3.12.6
+
+  - type: web
+    name: autoposter-front
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    outputDir: dist
+    envVars:
+      - key: VITE_API_URL
+        value: ""  # фронт ходит через собственный прокси /api/* на api-сервис
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://autoposter-api.onrender.com/api/:splat
+      - type: rewrite
+        source: /media/*
+        destination: https://autoposter-api.onrender.com/media/:splat

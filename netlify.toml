@@ -1,0 +1,25 @@
+# Netlify: хостинг ТОЛЬКО фронтенда (статика). Бэкенд должен работать elsewhere
+# (Render/Fly/Oracle) — укажите его URL в двух местах ниже вместо ЗАПЛАТОК.
+
+[build]
+  base = "frontend"
+  command = "npm install && npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://ВАШ-БЭКЕНД.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/media/*"
+  to = "https://ВАШ-БЭКЕНД.onrender.com/media/:splat"
+  status = 200
+  force = true
+
+# SPA-роутинг
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

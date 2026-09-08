@@ -1,0 +1,18 @@
+# python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/.env
+
+# данные (БД, загруженные медиа)
+backend/data/
+
+# node
+frontend/node_modules/
+frontend/dist/
+
+# локальные логи и мусор
+*.log
+post_payload.json
+.DS_Store

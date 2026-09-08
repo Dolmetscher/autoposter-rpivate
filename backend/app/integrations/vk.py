@@ -1,0 +1,251 @@
+"""ВКонтакте: посты на стене сообществ/профиля, фото, видео/клипы, истории, пин,
+автоудаление, источники кросспостинга (wall.get)."""
+from __future__ import annotations
+
+import re
+
+import httpx
+
+from ..config import settings
+from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem
+
+API = "https://api.vk.com/method"
+V = "5.199"
+
+
+class VKAdapter(SocialAdapter):
+    source_id = 1
+    name = "ВКонтакте"
+    capabilities = ("post", "photo", "video", "story", "clip", "channel")
+
+    # ---------- служебные ----------
+    async def call(self, method: str, token: str, **params):
+        params = {k: v for k, v in params.items() if v is not None}
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(f"{API}/{method}",
+                                  data={**params, "access_token": token, "v": V})
+        data = r.json()
+        if "error" in data:
+            raise AdapterError(f"VK {method}: {data['error'].get('error_msg', 'ошибка')}")
+        return data["response"]
+
+    @staticmethod
+    def owner_id(page) -> int:  # noqa: ANN001
+        pid = str(page.social_page_id).lstrip("+-")
+        if getattr(page, "page_kind", "group") == "user":
+            return int(pid)
+        return -int(re.sub(r"\D", "", pid) or 0)
+
+    # ---------- подключение ----------
+    def connect_requires(self) -> list[dict]:
+        return [{"name": "access_token", "label": "Access token VK (vk.com/dev)",
+                 "required": True}]
+
+    def oauth_authorize_url(self, state: str) -> str | None:
+        if not settings.vk_app_id:
+            return None
+        redirect = f"{settings.public_base_url}/api/web/oauth/vk/callback"
+        return ("https://oauth.vk.com/authorize?client_id={}&redirect_uri={}"
+                "&scope=wall,photos,video,stories,groups,offline,manage&response_type=code"
+                "&v={}&state={}").format(settings.vk_app_id, redirect, V, state)
+
+    async def oauth_exchange(self, code: str) -> dict:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get("https://oauth.vk.com/access_token", params={
+                "client_id": settings.vk_app_id, "client_secret": settings.vk_app_secret,
+                "redirect_uri": f"{settings.public_base_url}/api/web/oauth/vk/callback",
+                "code": code,
+            })
+        data = r.json()
+        if "access_token" not in data:
+            raise AdapterError(f"VK OAuth: {data.get('error_description', 'ошибка')}")
+        return {"access_token": data["access_token"]}
+
+    async def fetch_pages(self, account, extra: dict | None = None) -> list[PageInfo]:
+        token = account.credentials.get("access_token")
+        if not token:
+            raise AdapterError("VK: не указан access_token")
+        pages: list[PageInfo] = []
+        me = await self.call("users.get", token, fields="photo_100")
+        if me:
+            u = me[0]
+            pages.append(PageInfo(str(u["id"]), f"{u.get('first_name', '')} {u.get('last_name', '')}".strip(),
+                                  u.get("photo_100", ""), kind="user"))
+        groups = await self.call("groups.get", token, filter="admin,editor,moder",
+                                 extended=1, fields="photo_100,can_post")
+        for g in groups.get("items", []):
+            pages.append(PageInfo(str(g["id"]), g.get("name", ""), g.get("photo_100", ""),
+                                  kind="group", can_post=bool(g.get("can_post", True))))
+        return pages
+
+    # ---------- публикация ----------
+    async def _upload_photo(self, client: httpx.AsyncClient, token: str, group_id: int | None,
+                            media) -> str:  # noqa: ANN001
+        params = {"access_token": token, "v": V}
+        if group_id:
+            params["group_id"] = group_id
+        r = await client.post(f"{API}/photos.getWallUploadServer", data=params)
+        url = self._unwrap("photos.getWallUploadServer", r)
+        up = await client.post(url, files={"photo": (media.name, open(media_abs_path(media), "rb"))})
+        saved = await client.post(f"{API}/photos.saveWallPhoto", data={
+            **params, **{k: str(v) for k, v in up.json().items()
+                         if k in ("server", "photo", "hash")}})
+        items = self._unwrap("photos.saveWallPhoto", saved)
+        it = items[0]
+        return f"photo{it['owner_id']}_{it['id']}"
+
+    async def _upload_video(self, client: httpx.AsyncClient, token: str, group_id: int | None,
+                            media) -> str:  # noqa: ANN001
+        params = {"access_token": token, "v": V, "name": (media.title or media.name)[:100],
+                  "description": media.description or "", "wallpost": 0}
+        if group_id:
+            params["group_id"] = group_id
+        r = await client.post(f"{API}/video.save", data=params)
+        info = self._unwrap("video.save", r)
+        with open(media_abs_path(media), "rb") as f:
+            await client.post(info["upload_url"], files={"video_file": (media.name, f)})
+        return f"video{info['owner_id']}_{info['video_id']}"
+
+    async def _upload_doc(self, client: httpx.AsyncClient, token: str, group_id: int | None,
+                          media) -> str:  # noqa: ANN001
+        params = {"access_token": token, "v": V, "type": "doc", "title": media.name}
+        if group_id:
+            params["group_id"] = group_id
+        r = await client.post(f"{API}/docs.getWallUploadServer", data=params)
+        url = self._unwrap("docs.getWallUploadServer", r)
+        up = await client.post(url, files={"file": (media.name, open(media_abs_path(media), "rb"))})
+        saved = await client.post(f"{API}/docs.save", data={
+            **params, **{k: str(v) for k, v in up.json().items()
+                         if k in ("file", "title", "tags")}})
+        items = self._unwrap("docs.save", saved)
+        if isinstance(items, dict):
+            items = items.get("doc") or items.get("items") or [items]
+        it = items[0] if isinstance(items, list) else items
+        return f"doc{it['owner_id']}_{it['id']}"
+
+    async def _post_story(self, client: httpx.AsyncClient, token: str, page,
+                          content: PublishContent) -> PublishOutcome:  # noqa: ANN001
+        group_id = None if getattr(page, "page_kind", "group") == "user" \
+            else int(re.sub(r"\D", "", str(page.social_page_id)))
+        params = {"access_token": token, "v": V, "add_news": 1}
+        if group_id:
+            params["group_id"] = group_id
+        if not content.media:
+            raise AdapterError("VK истории: нужен файл фото или видео")
+        media = content.media[0]
+        method = "stories.getPhotoUploadServer" if media.type == "photo" else "stories.getVideoUploadServer"
+        r = await client.post(f"{API}/{method}", data=params)
+        url = self._unwrap(method, r)
+        field = "photo" if media.type == "photo" else "video_file"
+        up = await client.post(url, files={field: (media.name, open(media_abs_path(media), "rb"))})
+        data = up.json()
+        items = (data.get("response") or {}).get("items") or []
+        if not items:
+            raise AdapterError(f"VK истории: загрузка не удалась: {data}")
+        res = await client.post(f"{API}/stories.post", data={
+            **params, "upload_results": items[0].get("upload_result", "")})
+        out = self._unwrap("stories.post", res)
+        story = (out.get("items") or [{}])[0]
+        sid = story.get("id", "")
+        return PublishOutcome(True, external_id=f"story{sid}",
+                              external_url=f"https://vk.com/story{group_id or ''}_{sid}")
+
+    @staticmethod
+    def _unwrap(method: str, r: httpx.Response):
+        data = r.json()
+        if "error" in data:
+            raise AdapterError(f"VK {method}: {data['error'].get('error_msg', 'ошибка')}")
+        return data["response"]
+
+    async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
+        token = None
+        creds = page.account.credentials
+        token = creds.get("access_token")
+        if not token:
+            raise AdapterError("VK: у аккаунта нет access_token")
+        st = content.settings or {}
+        owner = self.owner_id(page)
+        group_id = None if owner > 0 else -owner
+        kind = getattr(page, "page_kind", "group")
+
+        async with httpx.AsyncClient(timeout=300) as client:
+            if st.get("publish_as_story"):
+                return await self._post_story(client, token, page, content)
+
+            attachments: list[str] = []
+            for media in content.media:
+                if st.get("publish_as_clips") and media.type == "video":
+                    att = await self._upload_video(client, token, group_id, media)
+                    if not st.get("share_clips_to_feed"):
+                        info = att.replace("video", "", 1)
+                        return PublishOutcome(True, external_id=info,
+                                              external_url=f"https://vk.com/clips{info}")
+                    attachments.append(att)
+                elif media.type == "photo":
+                    attachments.append(await self._upload_photo(client, token, group_id, media))
+                elif media.type == "video":
+                    attachments.append(await self._upload_video(client, token, group_id, media))
+            for doc in content.documents:
+                attachments.append(await self._upload_doc(client, token, group_id, doc))
+
+            if not content.text and not attachments:
+                raise AdapterError("VK: пустой пост (нет текста и вложений)")
+
+            r = await client.post(f"{API}/wall.post", data={
+                "access_token": token, "v": V, "owner_id": owner,
+                "from_group": 1 if kind != "user" else 0,
+                "message": content.text or "",
+                "attachments": ",".join(attachments),
+            })
+            resp = self._unwrap("wall.post", r)
+            post_id = resp["post_id"]
+            if st.get("pin_post"):
+                await self.call("wall.pin", token, owner_id=owner, post_id=post_id)
+            return PublishOutcome(True, external_id=f"{owner}_{post_id}",
+                                  external_url=f"https://vk.com/wall{owner}_{post_id}")
+
+    async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
+        token = page.account.credentials.get("access_token")
+        if not token or "_" not in external_id:
+            return False
+        owner, post_id = external_id.split("_", 1)
+        if post_id.startswith("story"):
+            await self.call("stories.delete", token, owner_id=int(owner), story_id=post_id[5:])
+        else:
+            await self.call("wall.delete", token, owner_id=int(owner), post_id=int(post_id))
+        return True
+
+    # ---------- кросспостинг ----------
+    async def fetch_source_items(self, source_ref: str, limit: int = 10,
+                                 account=None) -> list[SourceItem]:  # noqa: ANN001
+        token = (account.credentials.get("access_token") if account else None)
+        if not token:
+            raise AdapterError("VK-кросспостинг: подключите аккаунт ВКонтакте (нужен токен)")
+        digits = re.sub(r"\D", "", source_ref)
+        if not digits:
+            raise AdapterError("VK: укажите id группы/человека (напр. -12345)")
+        owner = int(digits)
+        if "club" in source_ref or source_ref.strip().startswith("-"):
+            owner = -owner
+        resp = await self.call("wall.get", token, owner_id=owner, count=limit,
+                               filter="owner" if owner < 0 else "owner")
+        items: list[SourceItem] = []
+        for p in resp.get("items", []):
+            media: list[dict] = []
+            for att in p.get("attachments", []):
+                if att.get("type") == "photo":
+                    sizes = att["photo"].get("sizes", [])
+                    if sizes:
+                        media.append({"url": sizes[-1]["url"], "kind": "photo"})
+            text = p.get("text", "")
+            if text or media:
+                items.append(SourceItem(
+                    external_id=f"{p.get('owner_id', owner)}_{p['id']}",
+                    text=text, media=media,
+                    url=f"https://vk.com/wall{p.get('owner_id', owner)}_{p['id']}"))
+        return items
+
+
+def media_abs_path(media) -> str:  # noqa: ANN001
+    from ..services.files import storage_path
+    return str(storage_path(media.file_path))

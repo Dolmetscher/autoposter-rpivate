@@ -1,0 +1,76 @@
+# Продакшен-режим: postgres + redis + api + worker(beat) + nginx(front+api)
+# Локальная разработка без docker: см. README («Быстрый старт»).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: autoposter
+      POSTGRES_PASSWORD: autoposter
+      POSTGRES_DB: autoposter
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoposter"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment: &appenv
+      DATABASE_URL: postgresql+asyncpg://autoposter:autoposter@db/autoposter
+      CELERY_BROKER_URL: redis://redis:6379/0
+      SCHEDULER_MODE: celery
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+      # Ключи OAuth-приложений (см. README)
+      VK_APP_ID: ${VK_APP_ID:-}
+      VK_APP_SECRET: ${VK_APP_SECRET:-}
+      OK_APP_ID: ${OK_APP_ID:-}
+      OK_APP_SECRET: ${OK_APP_SECRET:-}
+      OK_APP_PUBLIC_KEY: ${OK_APP_PUBLIC_KEY:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      TIKTOK_CLIENT_KEY: ${TIKTOK_CLIENT_KEY:-}
+      TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET:-}
+    volumes:
+      - storage:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: ./backend
+    command: celery -A app.celery_app worker -B -l info
+    environment: *appenv
+    volumes:
+      - storage:/app/data
+    depends_on:
+      - api
+
+  front:
+    image: nginx:alpine
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  storage:
