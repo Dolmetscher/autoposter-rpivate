@@ -35,6 +35,11 @@ async def list_sources(user: User = Depends(get_current_user),
 @router.post("", status_code=201)
 async def create_source(payload: CrosspostSourceIn, user: User = Depends(get_current_user),
                         s: AsyncSession = Depends(get_session)):
+    from ...services import limits
+    try:
+        await limits.ensure_within(s, user, "sources")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     src = CrosspostSource(user_id=user.id, **payload.model_dump())
     s.add(src)
     await s.commit()

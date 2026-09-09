@@ -39,6 +39,16 @@ class Settings(BaseSettings):
     # опрос Telegram-бота-ассистента (сек)
     tg_bot_poll_seconds: int = 6
 
+    # тарифы (MVP: без биллинга; смена плана вручную в настройках)
+    plans: dict = {
+        "free": {"name": "Базовый", "accounts": 3, "posts_month": 100, "sources": 3,
+                 "price": "0 ₽"},
+        "pro": {"name": "Профи", "accounts": 15, "posts_month": 1000, "sources": 20,
+                "price": "999 ₽/мес"},
+        "business": {"name": "Ультра", "accounts": 50, "posts_month": 10000, "sources": 100,
+                     "price": "2499 ₽/мес"},
+    }
+
     rows_limit: int = 20
     max_media_size_mb: int = 100
     crosspost_max_items_per_poll: int = 5

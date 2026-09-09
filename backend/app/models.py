@@ -14,10 +14,25 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
+    plan: Mapped[str] = mapped_column(String(32), default="free")
     llm_config: Mapped[dict] = mapped_column(EncryptedJSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     accounts: Mapped[list["SocialAccount"]] = relationship(back_populates="user")
+
+
+class TeamMember(Base):
+    """Член команды: участник входит в аккаунт владельца с ролью.
+    admin — всё, кроме управления командой/тарифом; editor — контент без настроек;
+    viewer — только просмотр."""
+    __tablename__ = "team_members"
+    __table_args__ = (UniqueConstraint("member_user_id", name="uq_team_member_user"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    member_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    role: Mapped[str] = mapped_column(String(16), default="editor")  # admin | editor | viewer
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class UserSettings(Base):

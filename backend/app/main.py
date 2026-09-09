@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
     Path(settings.storage_dir).mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _migrate_columns(conn)
 
     tasks = []
     if settings.scheduler_mode == "inline":
@@ -41,6 +42,28 @@ async def lifespan(app: FastAPI):
             await t
         except asyncio.CancelledError:
             pass
+
+
+async def _migrate_columns(conn) -> None:
+    """Мини-миграции для существующих БД (create_all не альтерит таблицы).
+    Список: (таблица, колонка, DDL-тип)."""
+    from sqlalchemy import text
+
+    migrations = [
+        ("users", "plan", "VARCHAR(32) DEFAULT 'free' NOT NULL"),
+        ("social_accounts", "extra", "JSON"),
+        ("crosspost_sources", "active", "BOOLEAN DEFAULT 1 NOT NULL"),
+    ]
+    for table, column, ddl in migrations:
+        try:
+            has = await conn.execute(text(
+                f"SELECT {column} FROM {table} LIMIT 0"))
+            has.close()
+        except Exception:
+            try:
+                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+            except Exception:
+                pass
 
 
 def create_app() -> FastAPI:

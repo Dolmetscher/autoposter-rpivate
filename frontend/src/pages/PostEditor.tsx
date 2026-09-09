@@ -104,6 +104,42 @@ export default function PostEditor({ sources, accounts }: Props) {
     }
   }
 
+  const [aiTopic, setAiTopic] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [bestHours, setBestHours] = useState<number[]>([])
+
+  useEffect(() => {
+    api.get<{ hours: number[] }>('/api/web/ai/best-hours')
+      .then((d) => setBestHours(d.hours)).catch(() => {})
+  }, [])
+
+  const aiGenerate = async () => {
+    if (!aiTopic.trim()) { setError('Введите тему для генерации'); return }
+    setAiBusy(true); setError('')
+    try {
+      const r = await api.post<{ text: string }>('/api/web/ai/generate',
+        { topic: aiTopic, style: '' })
+      setText(r.text)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка генерации')
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
+  const aiHashtags = async () => {
+    if (!text.trim()) { setError('Сначала напишите текст'); return }
+    setAiBusy(true); setError('')
+    try {
+      const r = await api.post<{ hashtags: string }>('/api/web/ai/hashtags', { text })
+      setText((t) => (t.trim() + '\n\n' + r.hashtags).trim())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка подбора хэштегов')
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
   const save = async (asDraft: boolean) => {
     setError('')
     if (!text.trim() && media.length === 0 && docs.length === 0) {
@@ -190,6 +226,16 @@ export default function PostEditor({ sources, accounts }: Props) {
             <h3 style={{ marginTop: 0 }}>Текст</h3>
             <textarea rows={7} value={text} placeholder="Текст поста для всех соцсетей…"
                       onChange={(e) => setText(e.target.value)} />
+            <div className="row" style={{ marginTop: 8 }}>
+              <input placeholder="Тема поста для AI-генерации…" value={aiTopic}
+                     style={{ flex: 1 }}
+                     onChange={(e) => setAiTopic(e.target.value)}
+                     onKeyDown={(e) => e.key === 'Enter' && aiGenerate()} />
+              <button className="secondary" disabled={aiBusy} onClick={aiGenerate}
+                      title="Сгенерировать текст по теме (нужен AI в Настройках)">✨ Написать</button>
+              <button className="secondary" disabled={aiBusy} onClick={aiHashtags}
+                      title="Подобрать хэштеги к тексту"># Хэштеги</button>
+            </div>
             <details style={{ marginTop: 12 }}>
               <summary className="clickable hint">Отдельный текст для конкретной сети</summary>
               {perSource.map((t, i) => (
@@ -311,6 +357,18 @@ export default function PostEditor({ sources, accounts }: Props) {
               <div className="row" style={{ marginTop: 10 }}>
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
                 <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+                {bestHours.length > 0 && (
+                  <div className="row" style={{ gap: 4 }}>
+                    <span className="hint">лучшее:</span>
+                    {bestHours.map((h) => (
+                      <button key={h} className="secondary" style={{ padding: '4px 8px' }}
+                              title="Час с лучшей статистикой просмотров"
+                              onClick={() => { setDate(new Date().toISOString().slice(0, 10)); setTime(`${String(h).padStart(2, '0')}:00`) }}>
+                        {String(h).padStart(2, '0')}:00
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {whenType === 3 && (

@@ -6,8 +6,10 @@ from .base import AdapterError, SocialAdapter
 from .dzen import DzenAdapter
 from .facebook import FacebookAdapter
 from .instagram import InstagramAdapter
+from .linkedin import LinkedInAdapter
 from .mock import MockAdapter
 from .ok import OKAdapter
+from .pinterest import PinterestAdapter
 from .telegram import TelegramAdapter
 from .tiktok import TikTokAdapter
 from .vk import VKAdapter
@@ -25,6 +27,8 @@ ADAPTER_BY_SLUG = {
     "tiktok": TikTokAdapter,
     "wordpress": WordPressAdapter,
     "facebook": FacebookAdapter,
+    "linkedin": LinkedInAdapter,
+    "pinterest": PinterestAdapter,
 }
 
 _cache: dict[str, SocialAdapter] = {}

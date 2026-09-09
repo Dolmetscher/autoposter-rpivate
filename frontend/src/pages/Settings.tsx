@@ -12,6 +12,8 @@ interface NotifyConfig {
 }
 interface SettingsData { timezone: string; llm_config: LlmConfig; notify: NotifyConfig }
 interface TokenRow { id: number; name: string; created_at: string; last_used_at: string | null }
+interface Plan { name: string; accounts: number; posts_month: number; sources: number; price: string }
+interface PlansData { plans: Record<string, Plan>; current: string; usage: { accounts: number; posts_month: number; sources: number } }
 
 const TIMEZONES = ['Europe/Moscow', 'Europe/Kaliningrad', 'Europe/Samara', 'Asia/Yekaterinburg',
   'Asia/Novosibirsk', 'Asia/Krasnoyarsk', 'Asia/Irkutsk', 'Asia/Vladivostok', 'UTC']
@@ -19,6 +21,7 @@ const TIMEZONES = ['Europe/Moscow', 'Europe/Kaliningrad', 'Europe/Samara', 'Asia
 export default function SettingsPage({ accounts }: { accounts: Account[] }) {
   const [data, setData] = useState<SettingsData | null>(null)
   const [tokens, setTokens] = useState<TokenRow[]>([])
+  const [plans, setPlans] = useState<PlansData | null>(null)
   const [newToken, setNewToken] = useState('')
   const [info, setInfo] = useState('')
   const [error, setError] = useState('')
@@ -26,6 +29,7 @@ export default function SettingsPage({ accounts }: { accounts: Account[] }) {
   const load = () => {
     api.get<SettingsData>('/api/web/settings').then(setData).catch(() => {})
     api.get<{ list: TokenRow[] }>('/api/web/settings/tokens').then((d) => setTokens(d.list)).catch(() => {})
+    api.get<PlansData>('/api/web/settings/plans').then(setPlans).catch(() => {})
   }
   useEffect(() => { load() }, [])
 
@@ -175,6 +179,43 @@ export default function SettingsPage({ accounts }: { accounts: Account[] }) {
         <div className="row" style={{ marginTop: 10 }}>
           <button className="secondary" onClick={testNotify}>Отправить тестовое сообщение</button>
         </div>
+      </div>
+
+      <div className="panel">
+        <h3 style={{ marginTop: 0 }}>Тариф</h3>
+        {plans && (
+          <>
+            <div className="hint" style={{ marginBottom: 10 }}>
+              Использовано за месяц: аккаунтов {plans.usage.accounts}, постов {plans.usage.posts_month},
+              {' '}источников кросспостинга {plans.usage.sources}
+            </div>
+            <div className="grid c4">
+              {Object.entries(plans.plans).map(([key, p]) => (
+                <div key={key} className="stat"
+                     style={key === plans.current ? { borderColor: 'var(--primary)', borderWidth: 2 } : {}}>
+                  <div className="between">
+                    <strong>{p.name}</strong>
+                    {key === plans.current && <span className="badge ok">текущий</span>}
+                  </div>
+                  <div className="num" style={{ fontSize: 18 }}>{p.price}</div>
+                  <div className="lbl">аккаунтов: {p.accounts} · постов/мес: {p.posts_month} · источников: {p.sources}</div>
+                  {key !== plans.current && (
+                    <button className="secondary" style={{ marginTop: 8, width: '100%', justifyContent: 'center' }}
+                            onClick={async () => {
+                              try {
+                                await api.post('/api/web/settings/plan', { plan: key })
+                                setInfo(`Тариф изменён на «${p.name}»`)
+                                load()
+                              } catch (e) {
+                                setError(e instanceof Error ? e.message : 'Ошибка')
+                              }
+                            }}>Переключиться</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       <div className="panel">

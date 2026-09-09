@@ -34,12 +34,16 @@ async def connect(payload: ConnectIn, user: User = Depends(get_current_user),
                   s: AsyncSession = Depends(get_session)):
     from ...integrations.registry import get_adapter
     from ...constants import SOURCES
+    from ...services import limits
     if payload.source_id not in SOURCES or SOURCES[payload.source_id].adapter is None:
         raise HTTPException(400, "Эта соцсеть пока не поддерживается")
     try:
+        await limits.ensure_within(s, user, "accounts")
         account = await accounts_service.connect_account(
             s, user, payload.source_id, payload.credentials, payload.extra)
     except AdapterError as e:
+        raise HTTPException(400, str(e))
+    except ValueError as e:
         raise HTTPException(400, str(e))
     await s.commit()
     d = AccountOut.model_validate(account).model_dump()

@@ -1,25 +1,26 @@
-"""Сборка всех роутеров: веб-API (/api/web) и публичный API (/api)."""
-from fastapi import APIRouter
+"""Сборка всех роутеров: веб-API (/api/web) и публичный API (/api).
+Все веб-роуты, кроме auth, проходят проверку роли (deps.guard_role)."""
+from fastapi import APIRouter, Depends
 
+from ..deps import guard_role
 from .public import hooppy
-from .web import (accounts, analytics, auth, crosspost, dashboard, files, oauth,
-                  posts, projects, schedules, settings_api, sources)
+from .web import (accounts, ai, analytics, auth, crosspost, dashboard, files,
+                  oauth, posts, projects, schedules, settings_api, sources, team)
 
 api_router = APIRouter()
 
-web_router = APIRouter()
-web_router.include_router(auth.router)
-web_router.include_router(accounts.router)
-web_router.include_router(sources.router)
-web_router.include_router(files.router)
-web_router.include_router(posts.router)
-web_router.include_router(projects.router)
-web_router.include_router(schedules.router)
-web_router.include_router(crosspost.router)
-web_router.include_router(analytics.router)
-web_router.include_router(settings_api.router)
-web_router.include_router(dashboard.router)
-web_router.include_router(oauth.router)
+# без guard: регистрация/вход
+auth_router = APIRouter()
+auth_router.include_router(auth.router)
 
-api_router.include_router(web_router, prefix="/api/web")
+# под guard: роли viewer/editor/admin ограничивают мутации
+guarded = APIRouter(dependencies=[Depends(guard_role)])
+for r in (accounts.router, sources.router, files.router, posts.router,
+          projects.router, schedules.router, crosspost.router, analytics.router,
+          ai.router, settings_api.router, dashboard.router, oauth.router,
+          team.router):
+    guarded.include_router(r)
+
+api_router.include_router(auth_router, prefix="/api/web")
+api_router.include_router(guarded, prefix="/api/web")
 api_router.include_router(hooppy.router, prefix="/api")

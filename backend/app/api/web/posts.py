@@ -102,6 +102,8 @@ async def create_post(payload: PostIn, user: User = Depends(get_current_user),
         pub_date = parse_publication_date(payload.publication_date) if payload.publication_date else None
         if payload.publication_when_type == 2 and not pub_date:
             raise HTTPException(400, "Укажите дату публикации")
+        from ...services import limits
+        await limits.ensure_within(s, user, "posts_month")
         post = await publish_service.create_post(
             s, user, texts=[t.model_dump() for t in payload.texts],
             media_ids=payload.media_ids, document_ids=payload.document_ids,

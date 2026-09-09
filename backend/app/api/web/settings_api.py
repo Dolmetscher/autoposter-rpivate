@@ -90,6 +90,29 @@ async def test_notify(user: User = Depends(get_current_user),
     return {"success": True}
 
 
+@router.get("/plans")
+async def get_plans(user: User = Depends(get_current_user),
+                    s: AsyncSession = Depends(get_session)):
+    from ...services import limits
+    return {"plans": limits.plans(), "current": user.plan,
+            "usage": await limits.usage(s, user)}
+
+
+class PlanIn(BaseModel):
+    plan: str
+
+
+@router.post("/plan")
+async def set_plan(payload: PlanIn, user: User = Depends(get_current_user),
+                   s: AsyncSession = Depends(get_session)):
+    from ...services import limits
+    if payload.plan not in limits.plans():
+        raise HTTPException(400, "Неизвестный тариф")
+    user.plan = payload.plan
+    await s.commit()
+    return {"current": user.plan, "usage": await limits.usage(s, user)}
+
+
 @router.get("/tokens")
 async def list_tokens(user: User = Depends(get_current_user),
                       s: AsyncSession = Depends(get_session)):

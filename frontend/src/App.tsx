@@ -12,6 +12,7 @@ import Accounts from './pages/Accounts'
 import Projects from './pages/Projects'
 import Schedules from './pages/Schedules'
 import Crosspost from './pages/Crosspost'
+import Team from './pages/Team'
 import SettingsPage from './pages/Settings'
 import { Account, SourceInfo } from './lib/types'
 
@@ -72,7 +73,8 @@ function Shell() {
         <Route path="/accounts" element={<Accounts sources={sources} reload={reloadMeta} />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/schedules" element={<Schedules />} />
-        <Route path="/crosspost" element={<Crosspost sources={sources} accounts={accounts} />} />
+          <Route path="/crosspost" element={<Crosspost sources={sources} accounts={accounts} />} />
+          <Route path="/team" element={<Team />} />
           <Route path="/settings" element={<SettingsPage accounts={accounts} />} />
       </Route>
     </Routes>
