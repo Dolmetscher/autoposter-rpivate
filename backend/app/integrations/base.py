@@ -97,6 +97,11 @@ class SocialAdapter(ABC):
                                  account=None) -> list[SourceItem]:  # noqa: ANN001
         raise AdapterError(f"{self.name}: источники не поддерживаются")
 
+    # --- аналитика: метрики опубликованного поста ---
+    async def fetch_stats(self, page, external_id: str) -> dict | None:  # noqa: ANN001
+        """{'views': int, 'likes': int, 'reposts': int, 'comments': int} или None."""
+        return None
+
     # --- утилиты ---
     @property
     def http(self) -> httpx.AsyncClient:

@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard'
 import Posts from './pages/Posts'
 import PostEditor from './pages/PostEditor'
 import CalendarPage from './pages/Calendar'
+import Analytics from './pages/Analytics'
 import Accounts from './pages/Accounts'
 import Projects from './pages/Projects'
 import Schedules from './pages/Schedules'
@@ -66,7 +67,8 @@ function Shell() {
         <Route path="/posts" element={<Posts sources={sources} />} />
         <Route path="/posts/new" element={<PostEditor sources={sources} accounts={accounts} />} />
         <Route path="/posts/:id" element={<PostEditor sources={sources} accounts={accounts} />} />
-        <Route path="/calendar" element={<CalendarPage />} />
+          <Route path="/calendar" element={<CalendarPage />} />
+          <Route path="/analytics" element={<Analytics sources={sources} />} />
         <Route path="/accounts" element={<Accounts sources={sources} reload={reloadMeta} />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/schedules" element={<Schedules />} />

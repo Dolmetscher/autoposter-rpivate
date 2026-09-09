@@ -34,6 +34,7 @@ export default function PostEditor({ sources, accounts }: Props) {
   const [projectId, setProjectId] = useState<number | ''>('')
   const [settings, setSettings] = useState<Record<string, unknown>>({})
   const [busy, setBusy] = useState(false)
+  const [busyT, setBusyT] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(editing)
 
@@ -87,6 +88,19 @@ export default function PostEditor({ sources, accounts }: Props) {
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Ошибка загрузки')
       }
+    }
+  }
+
+  const transcode = async (id: string, mode: string) => {
+    setBusyT(id)
+    setError('')
+    try {
+      const res = await api.post<MediaFile>(`/api/web/files/${id}/transcode`, { mode })
+      setMedia((m) => [...m, res])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка транскодинга')
+    } finally {
+      setBusyT(null)
     }
   }
 
@@ -228,6 +242,30 @@ export default function PostEditor({ sources, accounts }: Props) {
             </div>
             {media.length === 0 && docs.length === 0 && (
               <div className="empty" style={{ padding: '16px 0' }}>Перетащите файлы через кнопку загрузки</div>
+            )}
+            {media.some((m) => m.type === 'video') && (
+              <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                {media.filter((m) => m.type === 'video').map((m) => (
+                  <div key={m.id} className="row" style={{ gap: 6, padding: '3px 0' }}>
+                    <span className="hint" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      🎬 {m.name}
+                    </span>
+                    <button className="secondary" disabled={busyT === m.id}
+                            title="Вертикальная копия для Shorts/Reels/Клипов"
+                            onClick={() => transcode(m.id, 'vertical')}>9:16</button>
+                    <button className="secondary" disabled={busyT === m.id}
+                            title="Квадратная копия для ленты"
+                            onClick={() => transcode(m.id, 'square')}>1:1</button>
+                    <button className="secondary" disabled={busyT === m.id}
+                            title="Сжатие до 720p"
+                            onClick={() => transcode(m.id, 'compress')}>Сжать</button>
+                  </div>
+                ))}
+                <div className="hint" style={{ marginTop: 6 }}>
+                  Кнопки создают копию видео, не заменяя оригинал (9:16 — для Shorts/Reels/Клипов/TikTok).
+                  Требуется ffmpeg на сервере.
+                </div>
+              </div>
             )}
           </div>
         </div>

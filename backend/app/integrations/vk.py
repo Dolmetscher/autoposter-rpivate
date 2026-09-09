@@ -215,6 +215,23 @@ class VKAdapter(SocialAdapter):
             await self.call("wall.delete", token, owner_id=int(owner), post_id=int(post_id))
         return True
 
+    # ---------- аналитика ----------
+    async def fetch_stats(self, page, external_id: str) -> dict | None:  # noqa: ANN001
+        token = page.account.credentials.get("access_token")
+        if not token or "_" not in external_id:
+            return None
+        resp = await self.call("wall.getById", token, posts=external_id)
+        items = resp.get("items") if isinstance(resp, dict) else resp
+        if not items:
+            return None
+        p = items[0]
+        return {
+            "views": (p.get("views") or {}).get("count", 0),
+            "likes": (p.get("likes") or {}).get("count", 0),
+            "reposts": (p.get("reposts") or {}).get("count", 0),
+            "comments": (p.get("comments") or {}).get("count", 0),
+        }
+
     # ---------- кросспостинг ----------
     async def fetch_source_items(self, source_ref: str, limit: int = 10,
                                  account=None) -> list[SourceItem]:  # noqa: ANN001

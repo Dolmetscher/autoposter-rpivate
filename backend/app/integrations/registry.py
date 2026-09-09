@@ -4,12 +4,14 @@ from functools import lru_cache
 from ..constants import SOURCES
 from .base import AdapterError, SocialAdapter
 from .dzen import DzenAdapter
+from .facebook import FacebookAdapter
 from .instagram import InstagramAdapter
 from .mock import MockAdapter
 from .ok import OKAdapter
 from .telegram import TelegramAdapter
 from .tiktok import TikTokAdapter
 from .vk import VKAdapter
+from .wordpress import WordPressAdapter
 from .youtube import YouTubeAdapter
 
 ADAPTER_BY_SLUG = {
@@ -21,6 +23,8 @@ ADAPTER_BY_SLUG = {
     "youtube": YouTubeAdapter,
     "instagram": InstagramAdapter,
     "tiktok": TikTokAdapter,
+    "wordpress": WordPressAdapter,
+    "facebook": FacebookAdapter,
 }
 
 _cache: dict[str, SocialAdapter] = {}

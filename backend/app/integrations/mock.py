@@ -33,6 +33,11 @@ class MockAdapter(SocialAdapter):
     async def delete(self, page, external_id: str) -> bool:
         return True
 
+    async def fetch_stats(self, page, external_id: str) -> dict | None:  # noqa: ANN001
+        import hashlib
+        h = int(hashlib.md5(external_id.encode()).hexdigest(), 16)
+        return {"views": h % 5000, "likes": h % 300, "reposts": h % 50, "comments": h % 30}
+
     async def fetch_source_items(self, source_ref: str, limit: int = 10,
                                  account=None) -> list[SourceItem]:
         return []

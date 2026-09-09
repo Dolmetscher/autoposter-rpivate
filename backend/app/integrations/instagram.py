@@ -122,3 +122,25 @@ class InstagramAdapter(SocialAdapter):
                                                                 "access_token": token})
             permalink = r.json().get("permalink", "")
         return PublishOutcome(True, external_id=media_id, external_url=permalink)
+
+    # ---------- аналитика ----------
+    async def fetch_stats(self, page, external_id: str) -> dict | None:  # noqa: ANN001
+        token = page.account.credentials.get("access_token")
+        if not token:
+            return None
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(f"{GRAPH}/{external_id}",
+                                 params={"fields": "like_count,comments_count",
+                                         "access_token": token})
+        data = r.json()
+        if "error" in data:
+            return None
+        return {
+            "views": 0,  # просмотры — только через insights для Business
+            "likes": int(data.get("like_count", 0)),
+            "reposts": 0,
+            "comments": int(data.get("comments_count", 0)),
+        }
+
+    async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
+        raise AdapterError("Instagram: удаление через API недоступно")

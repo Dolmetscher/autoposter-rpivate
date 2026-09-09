@@ -224,3 +224,25 @@ class CrosspostSeen(Base):
 
 
 Index("ix_posts_status_date", Post.status, Post.publication_date)
+
+
+class PostStat(Base):
+    """Снимок метрик публикации (опрос по расписанию)."""
+    __tablename__ = "post_stats"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("post_targets.id", ondelete="CASCADE"), index=True)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    likes: Mapped[int] = mapped_column(Integer, default=0)
+    reposts: Mapped[int] = mapped_column(Integer, default=0)
+    comments: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AppState(Base):
+    """Служебные значения планировщика (последний запуск сбора статистики и т.п.)."""
+    __tablename__ = "app_state"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

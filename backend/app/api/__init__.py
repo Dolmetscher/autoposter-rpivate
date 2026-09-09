@@ -2,8 +2,8 @@
 from fastapi import APIRouter
 
 from .public import hooppy
-from .web import (accounts, auth, crosspost, dashboard, files, oauth, posts,
-                  projects, schedules, settings_api, sources)
+from .web import (accounts, analytics, auth, crosspost, dashboard, files, oauth,
+                  posts, projects, schedules, settings_api, sources)
 
 api_router = APIRouter()
 
@@ -16,6 +16,7 @@ web_router.include_router(posts.router)
 web_router.include_router(projects.router)
 web_router.include_router(schedules.router)
 web_router.include_router(crosspost.router)
+web_router.include_router(analytics.router)
 web_router.include_router(settings_api.router)
 web_router.include_router(dashboard.router)
 web_router.include_router(oauth.router)

@@ -6,6 +6,7 @@ const links: { to: string; label: string; icon: string }[] = [
   { to: '/', label: 'Дашборд', icon: '📊' },
   { to: '/posts', label: 'Посты', icon: '📝' },
   { to: '/calendar', label: 'Календарь', icon: '🗓' },
+  { to: '/analytics', label: 'Аналитика', icon: '📈' },
   { to: '/accounts', label: 'Аккаунты', icon: '🔗' },
   { to: '/projects', label: 'Проекты', icon: '📁' },
   { to: '/schedules', label: 'Расписания', icon: '⏰' },

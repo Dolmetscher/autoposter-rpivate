@@ -102,6 +102,24 @@ class YouTubeAdapter(SocialAdapter):
         vid = upload.json()["id"]
         return PublishOutcome(True, external_id=vid, external_url=f"https://youtu.be/{vid}")
 
+    async def fetch_stats(self, page, external_id: str) -> dict | None:  # noqa: ANN001
+        token = await self._token(page.account.credentials)
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get("https://www.googleapis.com/youtube/v3/videos",
+                                 params={"part": "statistics", "id": external_id},
+                                 headers={"Authorization": f"Bearer {token}"})
+        data = r.json()
+        items = data.get("items") or []
+        if not items:
+            return None
+        st = items[0].get("statistics", {})
+        return {
+            "views": int(st.get("viewCount", 0)),
+            "likes": int(st.get("likeCount", 0)),
+            "reposts": 0,
+            "comments": int(st.get("commentCount", 0)),
+        }
+
     async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
         token = await self._token(page.account.credentials)
         async with httpx.AsyncClient(timeout=30) as client:

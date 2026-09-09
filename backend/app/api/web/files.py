@@ -57,6 +57,10 @@ class MediaUpdateIn(BaseModel):
     description: str | None = None
 
 
+class TranscodeIn(BaseModel):
+    mode: str = "vertical"  # vertical | square | compress
+
+
 @router.put("/{file_id}")
 async def update_file(file_id: str, payload: MediaUpdateIn,
                       user: User = Depends(get_current_user),
@@ -88,6 +92,36 @@ async def delete_file(file_id: str, user: User = Depends(get_current_user),
     except OSError:
         pass
     return {"success": True}
+
+
+@router.post("/{file_id}/transcode")
+async def transcode_file(file_id: str, payload: TranscodeIn,
+                         user: User = Depends(get_current_user),
+                         s: AsyncSession = Depends(get_session)):
+    """Создаёт копию видео в выбранном формате (9:16 / 1:1 / сжатие). Требует ffmpeg."""
+    mf = await s.get(MediaFile, file_id)
+    if not mf or mf.user_id != user.id:
+        raise HTTPException(404, "Файл не найден")
+    if mf.type != "video":
+        raise HTTPException(400, "Транскодинг доступен только для видео")
+    from ...services import transcode as transcode_service
+    from ...util import gen_file_id, today_folder
+    try:
+        data, suffix = await transcode_service.transcode_video(
+            await storage.read_file(mf.file_path), mf.name, payload.mode)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    rel = f"posts/videos/{today_folder()}/{gen_file_id()}_{suffix}.mp4"
+    await storage.save_file(rel, data)
+    new = MediaFile(
+        id=gen_file_id(), user_id=user.id, type="video",
+        name=f"{Path(mf.name).stem}_{suffix}.mp4",
+        folder=today_folder(), file_path=rel, size=len(data),
+        seconds=mf.seconds, updated_date=str(int(utcnow().timestamp())),
+    )
+    s.add(new)
+    await s.commit()
+    return files_service.media_out(new)
 
 
 @router.get("/{file_id}/raw")

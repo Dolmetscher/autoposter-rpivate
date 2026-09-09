@@ -31,7 +31,9 @@ async def test_sources_list(client, auth_headers):
     srcs = {s["id"]: s for s in r.json()["list"]}
     assert srcs[1]["name"] == "ВКонтакте"
     assert srcs[99]["implemented"] is True
-    assert srcs[3]["implemented"] is False  # Facebook — заявлена, не реализована
+    assert srcs[3]["implemented"] is True   # Facebook — реализован
+    assert srcs[10]["implemented"] is True  # Вордпресс — реализован
+    assert srcs[4]["implemented"] is False  # Twitter/X — пока запланирована
 
 
 async def test_connect_mock_account(client, auth_headers):
