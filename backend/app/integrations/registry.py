@@ -7,9 +7,11 @@ from .dzen import DzenAdapter
 from .facebook import FacebookAdapter
 from .instagram import InstagramAdapter
 from .linkedin import LinkedInAdapter
+from .max import MaxAdapter
 from .mock import MockAdapter
 from .ok import OKAdapter
 from .pinterest import PinterestAdapter
+from .rutube import RutubeAdapter
 from .telegram import TelegramAdapter
 from .tiktok import TikTokAdapter
 from .vk import VKAdapter
@@ -29,6 +31,8 @@ ADAPTER_BY_SLUG = {
     "facebook": FacebookAdapter,
     "linkedin": LinkedInAdapter,
     "pinterest": PinterestAdapter,
+    "max": MaxAdapter,
+    "rutube": RutubeAdapter,
 }
 
 _cache: dict[str, SocialAdapter] = {}

@@ -3,6 +3,14 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { Account, MediaFile, Post, Project, Schedule, SourceInfo, sourceColor, sourceName } from '../lib/types'
 
+interface Template {
+  id: number
+  name: string
+  texts: { source_id: number; text: string }[]
+  media_ids: string[]
+  settings: Record<string, unknown>
+}
+
 interface Props {
   sources: SourceInfo[]
   accounts: Account[]
@@ -107,11 +115,44 @@ export default function PostEditor({ sources, accounts }: Props) {
   const [aiTopic, setAiTopic] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
   const [bestHours, setBestHours] = useState<number[]>([])
+  const [templates, setTemplates] = useState<Template[]>([])
+  const [tplId, setTplId] = useState<number | ''>('')
 
   useEffect(() => {
     api.get<{ hours: number[] }>('/api/web/ai/best-hours')
       .then((d) => setBestHours(d.hours)).catch(() => {})
+    api.get<{ list: Template[] }>('/api/web/templates')
+      .then((d) => setTemplates(d.list)).catch(() => {})
   }, [])
+
+  const applyTemplate = (id: number) => {
+    const tpl = templates.find((t) => t.id === id)
+    if (!tpl) return
+    setText(tpl.texts.find((t) => t.source_id === 0)?.text ?? '')
+    setPerSource(tpl.texts.filter((t) => t.source_id !== 0))
+    if (tpl.media_ids.length) {
+      api.get<{ list: MediaFile[] }>('/api/web/files').then((fl) => {
+        const byId = new Map(fl.list.map((m) => [m.id, m]))
+        setMedia(tpl.media_ids.map((mid) => byId.get(mid)).filter(Boolean) as MediaFile[])
+      })
+    }
+    if (Object.keys(tpl.settings || {}).length) setSettings(tpl.settings)
+  }
+
+  const saveTemplate = async () => {
+    const name = prompt('Название шаблона:')
+    if (!name) return
+    try {
+      await api.post('/api/web/templates', {
+        name, texts: [{ source_id: 0, text }], media_ids: media.map((m) => m.id),
+        settings: { publish_as_story: settings.publish_as_story, pin_post: settings.pin_post },
+      })
+      const d = await api.get<{ list: Template[] }>('/api/web/templates')
+      setTemplates(d.list)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка сохранения шаблона')
+    }
+  }
 
   const aiGenerate = async () => {
     if (!aiTopic.trim()) { setError('Введите тему для генерации'); return }
@@ -214,6 +255,20 @@ export default function PostEditor({ sources, accounts }: Props) {
           <p className="subtitle">Текст, вложения и цели публикации</p>
         </div>
         <div className="row">
+          {templates.length > 0 && (
+            <>
+              <select value={tplId} onChange={(e) => { setTplId(Number(e.target.value)); applyTemplate(Number(e.target.value)) }}>
+                <option value="">Шаблон…</option>
+                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <button className="ghost" title="Сохранить текущий текст и медиа как шаблон"
+                      onClick={saveTemplate}>💾 В шаблон</button>
+            </>
+          )}
+          {templates.length === 0 && text.trim() && (
+            <button className="ghost" title="Сохранить текущий текст и медиа как шаблон"
+                    onClick={saveTemplate}>💾 В шаблон</button>
+          )}
           <button className="secondary" disabled={busy} onClick={() => save(true)}>Сохранить черновик</button>
           <button disabled={busy} onClick={() => save(false)}>Сохранить</button>
         </div>
@@ -400,6 +455,7 @@ export default function PostEditor({ sources, accounts }: Props) {
               <label className="check"><input type="checkbox" checked={bool('publish_as_shorts')} onChange={(e) => set('publish_as_shorts', e.target.checked)} /> YouTube: как Shorts</label>
               <label className="check"><input type="checkbox" checked={bool('publish_as_reel')} onChange={(e) => set('publish_as_reel', e.target.checked)} /> Instagram: как Reels</label>
               <label className="check"><input type="checkbox" checked={bool('publish_as_carousel')} onChange={(e) => set('publish_as_carousel', e.target.checked)} /> Как карусель (несколько фото)</label>
+              <label className="check"><input type="checkbox" checked={bool('approval_required')} onChange={(e) => set('approval', e.target.checked ? { required: true, status: 'pending' } : {})} /> Требовать согласование (админ одобрит перед публикацией)</label>
             </div>
             <div className="row" style={{ marginTop: 12 }}>
               <label className="field" style={{ flex: 1 }}>

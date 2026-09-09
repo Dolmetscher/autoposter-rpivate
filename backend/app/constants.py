@@ -51,10 +51,15 @@ SOURCES: dict[int, SourceInfo] = {
                    (C_POST, C_PHOTO, C_DOCUMENT), color="#21759b"),
     13: SourceInfo(13, "linkedin", "ЛинкедИн", "linkedin", (C_POST,),
                    color="#0a66c2"),
+    15: SourceInfo(15, "rutube", "Рутуб", "rutube", (C_VIDEO,), experimental=True,
+                   color="#ef1f30"),
     8: SourceInfo(8, "pinterest", "Пинтерест", "pinterest", (C_POST, C_PHOTO, C_VIDEO),
                   color="#e60023"),
     14: SourceInfo(14, "tiktok", "TikTok", "tiktok", (C_PHOTO, C_VIDEO),
                    color="#111111"),
+    22: SourceInfo(22, "max", "Макс", "max",
+                   (C_POST, C_PHOTO, C_VIDEO, C_DOCUMENT, C_CHANNEL, C_CHAT),
+                   color="#6b4eff"),
     17: SourceInfo(17, "youtube", "YouTube", "youtube", (C_VIDEO, C_SHORTS),
                    color="#ff0000"),
     20: SourceInfo(20, "dzen", "Дзен", "dzen", (C_POST,), experimental=True,
@@ -68,12 +73,10 @@ PLANNED_SOURCES: dict[int, SourceInfo] = {
     5: SourceInfo(5, "moimir", "Мой Мир", None, color="#168de2"),
     7: SourceInfo(7, "viber", "Вайбер", None, color="#7360f2"),
     12: SourceInfo(12, "threads", "Тредс", None, color="#101010"),
-    15: SourceInfo(15, "rutube", "Рутуб", None, color="#ef1f30"),
     16: SourceInfo(16, "whatsapp", "Вотсап", None, color="#25d366"),
     18: SourceInfo(18, "yappy", "Яппи", None, color="#ff4b4b"),
     19: SourceInfo(19, "tumblr", "Тамблер", None, color="#36465d"),
     21: SourceInfo(21, "vibes", "Вайбс", None, color="#7b61ff"),
-    22: SourceInfo(22, "max", "Макс", None, color="#6b4eff"),
 }
 
 SOURCE_BY_SLUG = {s.slug: s for s in list(SOURCES.values()) + list(PLANNED_SOURCES.values())}

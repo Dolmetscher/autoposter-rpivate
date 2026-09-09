@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,6 +16,25 @@ from ...services import publish as publish_service
 from ...util import utcnow
 
 router = APIRouter(prefix="/posts", tags=["posts"])
+
+
+def _role(request: Request) -> str:
+    return getattr(request.state, "role", "owner")
+
+
+def approval_of(post: Post) -> dict:
+    return (post.settings or {}).get("approval") or {}
+
+
+def _can_publish(post: Post, role: str) -> bool:
+    """Пост с включённым согласованием публикует только админ/владелец
+    и только после одобрения."""
+    ap = approval_of(post)
+    if not ap.get("required"):
+        return True
+    if role in ("owner", "admin"):
+        return True
+    return ap.get("status") == "approved"
 
 
 def post_to_out(post: Post, full: bool = False) -> dict:
@@ -96,8 +116,18 @@ async def get_post(post_id: int, user: User = Depends(get_current_user),
 
 
 @router.post("")
-async def create_post(payload: PostIn, user: User = Depends(get_current_user),
+async def create_post(payload: PostIn, request: Request,
+                      user: User = Depends(get_current_user),
                       s: AsyncSession = Depends(get_session)):
+    role = _role(request)
+    st = payload.settings or {}
+    ap = (st.get("approval") or {})
+    if ap.get("required") and role not in ("owner", "admin"):
+        # редактор инициирует согласование: пост создаётся черновиком со статусом pending
+        st["approval"] = {**ap, "required": True, "status": "pending"}
+        payload.settings = st
+        payload.status = "draft"
+        payload.publication_when_type = 1
     try:
         pub_date = parse_publication_date(payload.publication_date) if payload.publication_date else None
         if payload.publication_when_type == 2 and not pub_date:
@@ -136,12 +166,19 @@ async def create_post(payload: PostIn, user: User = Depends(get_current_user),
 
 
 @router.put("/{post_id}")
-async def update_post(post_id: int, payload: PostIn,
+async def update_post(post_id: int, payload: PostIn, request: Request,
                       user: User = Depends(get_current_user),
                       s: AsyncSession = Depends(get_session)):
+    role = _role(request)
     post = await load_post(s, user, post_id)
     if post.status in ("publishing",):
         raise HTTPException(400, "Пост сейчас публикуется")
+    st = payload.settings or {}
+    ap = (st.get("approval") or {})
+    if ap.get("required") and role not in ("owner", "admin"):
+        # редактор не может сам себя одобрить — сбрасываем на pending
+        st["approval"] = {**ap, "required": True, "status": "pending"}
+        payload.settings = st
     # удаляем опубликованные таргеты из пересборки — их не трогаем
     published = {t.page_id for t in post.targets if t.status in ("published", "deleted")}
     keep_targets = [t for t in post.targets if t.status in ("published", "deleted")]
@@ -194,6 +231,9 @@ async def update_post(post_id: int, payload: PostIn,
 
     if payload.status != "draft" and (payload.publication_when_type == 1 or
                                       (post.publication_date and post.publication_date <= utcnow())):
+        if not _can_publish(post, role):
+            await s.commit()
+            raise HTTPException(403, "Пост ждёт согласования — его одобрит администратор")
         if settings.scheduler_mode == "celery":
             from ...celery_app import publish_post_task
             await s.commit()
@@ -201,17 +241,58 @@ async def update_post(post_id: int, payload: PostIn,
         else:
             await publish_service.publish_post_now(s, post)
     elif payload.publication_date or payload.publication_when_type == 2:
+        if not _can_publish(post, role):
+            await s.commit()
+            raise HTTPException(403, "Пост ждёт согласования — планировать его будет администратор после одобрения")
         post.status = "scheduled"
     await s.commit()
     return post_to_out(await load_post(s, user, post.id))
 
 
+class ApproveIn(BaseModel):
+    decision: str  # approved | rejected
+    comment: str = ""
+
+
+@router.post("/{post_id}/approve")
+async def approve_post(post_id: int, payload: ApproveIn, request: Request,
+                       user: User = Depends(get_current_user),
+                       s: AsyncSession = Depends(get_session)):
+    role = _role(request)
+    if role not in ("owner", "admin"):
+        raise HTTPException(403, "Согласовывать посты может только администратор или владелец")
+    if payload.decision not in ("approved", "rejected"):
+        raise HTTPException(400, "decision: approved или rejected")
+    post = await load_post(s, user, post_id)
+    st = dict(post.settings or {})
+    ap = dict((st.get("approval") or {}))
+    ap.update({"required": True, "status": payload.decision,
+               "by": (getattr(request.state, "identity", None) or user).email,
+               "at": utcnow().isoformat(),
+               "comment": payload.comment[:500]})
+    st["approval"] = ap
+    post.settings = st
+    if payload.decision == "rejected":
+        post.status = "draft"
+    add_log = publish_service.add_log
+    add_log(s, user.id,
+            f"Согласование: пост #{post.id} — {payload.decision}"
+            + (f": {payload.comment}" if payload.comment else ""),
+            "info" if payload.decision == "approved" else "error", post_id=post.id)
+    await s.commit()
+    return post_to_out(await load_post(s, user, post.id))
+
+
 @router.post("/{post_id}/publish")
-async def publish_now(post_id: int, user: User = Depends(get_current_user),
+async def publish_now(post_id: int, request: Request,
+                      user: User = Depends(get_current_user),
                       s: AsyncSession = Depends(get_session)):
+    role = _role(request)
     post = await load_post(s, user, post_id)
     if post.status == "publishing":
         raise HTTPException(400, "Пост сейчас публикуется")
+    if not _can_publish(post, role):
+        raise HTTPException(403, "Пост ждёт согласования — публикация после одобрения администратором")
     post.status = "publishing"
     await publish_service.publish_post_now(s, post)
     await s.commit()

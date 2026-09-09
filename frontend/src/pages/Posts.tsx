@@ -9,6 +9,7 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [selected, setSelected] = useState<number[]>([])
+  const [myRole, setMyRole] = useState('owner')
 
   const load = async () => {
     const params = new URLSearchParams({ page: String(page) })
@@ -18,7 +19,18 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
     setPosts(d.list)
     setTotal(d.total_rows)
   }
-  useEffect(() => { load().catch(() => {}) }, [page, filter])
+  useEffect(() => {
+    load().catch(() => {})
+    api.get<{ role: string }>('/api/web/team/my-role').then((r) => setMyRole(r.role)).catch(() => {})
+  }, [page, filter])
+
+  const canApprove = myRole === 'owner' || myRole === 'admin'
+
+  const approve = async (id: number, decision: 'approved' | 'rejected') => {
+    const comment = decision === 'rejected' ? (prompt('Причина отказа (необязательно):') ?? '') : ''
+    await api.post(`/api/web/posts/${id}/approve`, { decision, comment })
+    load()
+  }
 
   const del = async (id: number) => {
     if (!confirm('Удалить пост?')) return
@@ -74,6 +86,7 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
               <th>Когда</th>
               <th>Куда</th>
               <th>Статус</th>
+              <th>Согласование</th>
               <th></th>
             </tr>
           </thead>
@@ -81,6 +94,7 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
             {posts.map((p) => {
               const main = p.texts.find((t) => t.source_id === 0)?.text
                 ?? p.texts[0]?.text ?? '(без текста)'
+              const ap = (p.settings?.approval ?? {}) as { required?: boolean; status?: string }
               return (
                 <tr key={p.id}>
                   <td><input type="checkbox" checked={selected.includes(p.id)} onChange={(e) =>
@@ -106,7 +120,28 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
                     </div>
                   </td>
                   <td>{statusBadge(p.status)}</td>
-                  <td><button className="ghost danger" style={{ color: 'var(--danger)' }} onClick={() => del(p.id)}>✕</button></td>
+                  <td>
+                    {(() => {
+                      if (!ap.required) return null
+                      if (ap.status === 'pending') return <span className="badge wait">На согласовании</span>
+                      if (ap.status === 'approved') return <span className="badge ok">Одобрен</span>
+                      if (ap.status === 'rejected') return <span className="badge err">Отклонён</span>
+                      return null
+                    })()}
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {canApprove && ap.required && ap.status === 'pending' && (
+                      <>
+                        <button className="ghost" style={{ color: 'var(--ok)' }}
+                                title="Одобрить"
+                                onClick={() => approve(p.id, 'approved')}>✓</button>
+                        <button className="ghost" style={{ color: 'var(--danger)' }}
+                                title="Отклонить"
+                                onClick={() => approve(p.id, 'rejected')}>✗</button>
+                      </>
+                    )}
+                    <button className="ghost danger" style={{ color: 'var(--danger)' }} onClick={() => del(p.id)}>✕</button>
+                  </td>
                 </tr>
               )
             })}

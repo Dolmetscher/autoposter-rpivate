@@ -107,7 +107,20 @@ class Schedule(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     slots: Mapped[list] = mapped_column(JSON, default=list)
-    # slots: [{"days": [1..7], "time": "10:00"}, ...] в таймзоне пользователя
+    # slots: [{"days": [1..7], "time": "HH:MM"}, ...] в таймзоне пользователя
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PostTemplate(Base):
+    """Шаблон поста: тексты по сетям, медиа и настройки для быстрого переиспользования."""
+    __tablename__ = "post_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    texts: Mapped[list] = mapped_column(JSON, default=list)      # [{"source_id", "text"}]
+    media_ids: Mapped[list] = mapped_column(JSON, default=list)  # id MediaFile
+    settings: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

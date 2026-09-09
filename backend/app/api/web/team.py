@@ -30,6 +30,14 @@ def _out(m: TeamMember, email: str) -> dict:
             "role": m.role, "created_at": m.created_at.isoformat()}
 
 
+@router.get("/my-role")
+async def my_role(request: Request, user: User = Depends(get_current_user)):
+    """Роль вошедшего относительно действующего аккаунта (для UI-кнопок согласования)."""
+    return {"role": getattr(request.state, "role", "owner"),
+            "acting_email": user.email,
+            "identity_email": (getattr(request.state, "identity", None) or user).email}
+
+
 @router.get("")
 async def list_members(user: User = Depends(get_current_user),
                        s: AsyncSession = Depends(get_session)):
