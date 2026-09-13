@@ -74,5 +74,32 @@ class Settings(BaseSettings):
         "Верни только переписанный текст без пояснений."
     )
 
+    # --- «Автоматизированная редакция» (redakciya) ---
+    # LLM: OpenRouter по умолчанию (OpenAI-совместимый), ротация free-моделей.
+    red_openrouter_api_key: str = ""
+    red_openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    red_models: list[str] = [
+        "deepseek/deepseek-chat-v3.1:free",
+        "qwen/qwen3-235b-a22b:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "openrouter/free",
+    ]
+    # Fallback: локальный Ollama (OpenAI-совместимый). Пусто = пропустить.
+    red_ollama_base_url: str = ""
+    red_ollama_model: str = "qwen2.5:7b"
+    red_llm_timeout: int = 30
+    red_llm_daily_budget: int = 45  # FR-2.4.1/2.13: без пополнения лимит 50/день
+    red_llm_max_tokens: int = 500
+
+    red_alert_threshold: float = 4.0            # FR-3.1
+    red_max_alerts_per_10min: int = 5           # FR-3.8
+    red_digest_time: str = "19:00"              # FR-4.1, TZ пользователя
+    red_noon_digest: bool = True                # FR-4.2 (13:00 при >=3 digest-worthy)
+    red_retention_hours: int = 72               # FR-7.2
+    red_max_body_chars: int = 10000             # NFR-22
+    red_max_media_per_item: int = 4             # FR-1.12
+    red_silence_alert_min: int = 60             # FR-3.3, 0 = выключено
+    red_degraded_poll_sec: int = 21600          # FR-5.6: degraded поллится раз в 6 ч
+
 
 settings = Settings()
