@@ -1,6 +1,6 @@
-# Render Blueprint: backend как web service (free), frontend как static site (free).
-# Деплой: Render → New → Blueprint → укажите репозиторий.
-# Postgres берите внешний бесплатный (Neon) — бесплатный Postgres от Render удаляется через 30 дней.
+# Render Blueprint: бэкенд FastAPI (free) + опционально статика фронтенда.
+# Деплой: Render → New → Blueprint → выберите репозиторий.
+# БД — внешний бесплатный PostgreSQL (Neon), её строка вводится в дашборде Render.
 services:
   - type: web
     name: autoposter-api
@@ -11,32 +11,37 @@ services:
     plan: free
     healthCheckPath: /healthz
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.6
       - key: DATABASE_URL
-        fromService:
-          type: pserv
-          name: dummy  # замените на syncVar или впишите значение Neon в дашборде
+        sync: false   # строка Neon: postgresql+asyncpg://user:pass@host/db?sslmode=require
+      - key: PUBLIC_BASE_URL
+        sync: false   # публичный URL сервиса, напр. https://autoposter-api.onrender.com
       - key: SCHEDULER_MODE
         value: inline
       - key: SECRET_KEY
         generateValue: true
-      - key: PUBLIC_BASE_URL
-        value: https://autoposter-api.onrender.com  # замените на свой URL сервиса
-      - key: PYTHON_VERSION
-        value: 3.12.6
+      # ключи соцсетей (необязательно, добавляются позже в дашборде):
+      - key: VK_APP_ID
+        sync: false
+      - key: VK_APP_SECRET
+        sync: false
 
+  # Альтернатива Netlify: фронтенд как статический сайт на Render.
+  # ПЕРЕД деплоем замените ВАШ-БЭКЕНД-ИМЯ.onrender.com на имя сервиса выше.
   - type: web
     name: autoposter-front
     runtime: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     outputDir: dist
-    envVars:
-      - key: VITE_API_URL
-        value: ""  # фронт ходит через собственный прокси /api/* на api-сервис
     routes:
       - type: rewrite
         source: /api/*
-        destination: https://autoposter-api.onrender.com/api/:splat
+        destination: https://ВАШ-БЭКЕНД-ИМЯ.onrender.com/api/:splat
       - type: rewrite
         source: /media/*
-        destination: https://autoposter-api.onrender.com/media/:splat
+        destination: https://ВАШ-БЭКЕНД-ИМЯ.onrender.com/media/:splat
+      - type: rewrite
+        source: /*
+        destination: /index.html
