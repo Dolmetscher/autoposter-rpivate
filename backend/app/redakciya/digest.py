@@ -190,7 +190,7 @@ async def _llm_intro_outro(s: AsyncSession, user: User,
               "вводку (1-2 предложения, живой тон) и заключение с вопросом для "
               "вовлечения подписчиков. Верни СТРОГО JSON: "
               '{"intro": "...", "outro": "..."}\n\nМатериалы:\n' + top3)
-    chain = llm._effective_chain(user)
+    chain = llm._provider_chain(user)
     link = chain[0] if chain else llm._ollama_link()
     if link is None or await llm.budget_left(s, user.id) <= 0:
         return "", ""

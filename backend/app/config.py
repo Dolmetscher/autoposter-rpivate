@@ -84,6 +84,13 @@ class Settings(BaseSettings):
         "meta-llama/llama-3.3-70b-instruct:free",
         "openrouter/free",
     ]
+    # Альтернативные LLM-роутеры (замена/каскад вместо OpenRouter): список словарей
+    # {"name": "...", "base_url": "https://.../v1", "api_key": "...",
+    #  "models": ["..."], "extra_headers": {"заголовок": "значение"}}.
+    # Подходит любой OpenAI-совместимый провайдер (Groq, DeepSeek, Gemini,
+    # LiteLLM-proxy, Requesty...). Если список пуст — работает legacy-конфиг
+    # red_openrouter_api_key + red_models (см. выше).
+    red_llm_providers: list[dict] = []
     # Fallback: локальный Ollama (OpenAI-совместимый). Пусто = пропустить.
     red_ollama_base_url: str = ""
     red_ollama_model: str = "qwen2.5:7b"

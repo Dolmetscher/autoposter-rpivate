@@ -1,8 +1,11 @@
 """LLM-скоринг через OpenAI-совместимые API (FR-2.2–2.6, §2.2.5).
 
-Цепочка: OpenRouter free-модели (ротация) → Ollama → rule-based.
+Провайдер (роутер) = base_url + api_key + список моделей — OpenRouter,
+Groq, DeepSeek, Gemini, LiteLLM-proxy и т.д. взаимозаменяемы через конфиг.
+Цепочка вызовов (ротация при 429/таймауте/5xx): личный LLM пользователя →
+провайдеры из RED_LLM_PROVIDERS (по порядку) → Ollama → rule-based.
 Бюджет запросов/день учитывается в app_state (FR-2.4.1, FR-2.13).
-Фактическая модель возвращается наружу и пишется в red_scores.model (FR-2.14).
+Фактический «провайдер:модель» пишется в red_scores.model (FR-2.14).
 """
 from __future__ import annotations
 
@@ -10,6 +13,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 import httpx
@@ -23,7 +27,6 @@ from .models import RedGuideline, RedItem, RedSource
 log = logging.getLogger("red.llm")
 
 CATEGORIES = ("новость", "аналитика", "мнение", "инструменты", "инфоповод")
-VALID_MODELS_PREFIX = ("openrouter:", "ollama:")
 
 SCORE_SCHEMA = {
     "significance": "число 0.0-5.0 с шагом 0.5",
@@ -76,7 +79,8 @@ async def budget_left(s: AsyncSession, user_id: int) -> int:
 async def _spend(s: AsyncSession, user_id: int) -> None:
     today = utcnow().strftime("%Y-%m-%d")
     row = await s.get(AppState, budget_state_key(user_id))
-    value = {"date": today, "count": 0}
+    # текущий вызов сам расходует запрос: новый день всегда начинается с 1
+    value = {"date": today, "count": 1}
     if row is not None and row.value.get("date") == today:
         value["count"] = int(row.value.get("count", 0)) + 1
     if row is not None:
@@ -86,25 +90,90 @@ async def _spend(s: AsyncSession, user_id: int) -> None:
         s.add(AppState(key=budget_state_key(user_id), value=value, updated_at=utcnow()))
 
 
-def _effective_chain(user: User) -> list[dict]:
-    """Приоритетная цепочка вызовов: свой LLM пользователя → OpenRouter-ротация (FR-2.2)."""
+@dataclass(frozen=True)
+class LLMProvider:
+    """Один LLM-роутер: любой OpenAI-совместимый /chat/completions-эндпоинт."""
+    name: str
+    base_url: str
+    api_key: str
+    models: tuple[str, ...] = ()
+    extra_headers: dict = field(default_factory=dict)
+
+    def links(self) -> list[dict]:
+        return [{"provider": self.name, "base_url": self.base_url.rstrip("/"),
+                 "api_key": self.api_key, "model": m,
+                 "extra_headers": dict(self.extra_headers)}
+                for m in self.models]
+
+
+def providers_from_settings() -> list[LLMProvider]:
+    """Провайдеры из RED_LLM_PROVIDERS; если не заданы — legacy OpenRouter-конфиг."""
+    out: list[LLMProvider] = []
+    for raw in settings.red_llm_providers or []:
+        base_url = str(raw.get("base_url") or "").rstrip("/")
+        models = tuple(str(m) for m in (raw.get("models") or []) if str(m).strip())
+        if not base_url or not models:
+            log.warning("RED_LLM_PROVIDERS: запись пропущена (нужны base_url и models): %s",
+                        list(raw.keys()))
+            continue
+        out.append(LLMProvider(
+            name=str(raw.get("name") or base_url.split("//")[-1].split("/")[0]),
+            base_url=base_url, api_key=str(raw.get("api_key") or ""),
+            models=models, extra_headers=dict(raw.get("extra_headers") or {})))
+    if not out and settings.red_openrouter_api_key:
+        out.append(LLMProvider(
+            name="openrouter", base_url=settings.red_openrouter_base_url,
+            api_key=settings.red_openrouter_api_key, models=tuple(settings.red_models),
+            extra_headers={"HTTP-Referer": "https://autoposter.local",
+                           "X-Title": "Autoposter Redakciya"}))
+    return out
+
+
+def providers_summary() -> list[dict]:
+    """Имена и модели настроенных провайдеров — для /red/health (без ключей)."""
+    return [{"name": p.name, "models": list(p.models)} for p in providers_from_settings()]
+
+
+def _provider_chain(user: User) -> list[dict]:
+    """Приоритетная цепочка вызовов (FR-2.2):
+    личный LLM пользователя → провайдеры из настроек (по порядку)."""
     chain: list[dict] = []
     cfg = user.llm_config or {}
     if cfg.get("base_url") and cfg.get("api_key"):
-        chain.append({"base_url": cfg["base_url"], "api_key": cfg["api_key"],
-                      "model": cfg.get("model") or settings.red_models[0]})
-    if settings.red_openrouter_api_key:
-        for model in settings.red_models:
-            chain.append({"base_url": settings.red_openrouter_base_url,
-                          "api_key": settings.red_openrouter_api_key, "model": model})
+        chain.append({"provider": "personal", "base_url": cfg["base_url"].rstrip("/"),
+                      "api_key": cfg["api_key"],
+                      "model": cfg.get("model") or settings.red_models[0],
+                      "extra_headers": {}})
+    for p in providers_from_settings():
+        chain.extend(p.links())
     return chain
+
+
+# совместимость со старым именем (использовался в digest.py до рефакторинга)
+_effective_chain = _provider_chain
 
 
 def _ollama_link() -> dict | None:
     if settings.red_ollama_base_url:
-        return {"base_url": settings.red_ollama_base_url.rstrip("/"), "api_key": "ollama",
-                "model": settings.red_ollama_model}
+        return {"provider": "ollama",
+                "base_url": settings.red_ollama_base_url.rstrip("/"), "api_key": "ollama",
+                "model": settings.red_ollama_model, "extra_headers": {}}
     return None
+
+
+def _model_label(link: dict) -> str:
+    """«провайдер:модель» — записывается в scores.model для оценки качества (FR-2.14)."""
+    name, model = str(link.get("provider") or ""), str(link["model"])
+    if name and name not in ("personal",) and not model.startswith(f"{name}:"):
+        return f"{name}:{model}"
+    return model
+
+
+def _headers(link: dict) -> dict:
+    """Bearer-авторизация + доп. заголовки провайдера (напр. api-key для Azure-стиля)."""
+    out = {"Authorization": f"Bearer {link['api_key']}"}
+    out.update(link.get("extra_headers") or {})
+    return out
 
 
 async def _chat(link: dict, system_prompt: str, user_prompt: str) -> str:
@@ -112,9 +181,7 @@ async def _chat(link: dict, system_prompt: str, user_prompt: str) -> str:
     async with httpx.AsyncClient(timeout=settings.red_llm_timeout) as client:
         resp = await client.post(
             f"{link['base_url'].rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {link['api_key']}",
-                     "HTTP-Referer": "https://autoposter.local",
-                     "X-Title": "Autoposter Redakciya"},
+            headers=_headers(link),
             json={
                 "model": link["model"],
                 "temperature": 0,
@@ -208,18 +275,18 @@ async def score_material(s: AsyncSession, user: User, source: RedSource,
         return rule_based(source, item, guideline), "rule-based", 0
 
     system_prompt, user_prompt = build_prompts(guideline, source, item)
-    chain = _effective_chain(user)
+    chain = _provider_chain(user)
     ollama = _ollama_link()
 
     if not chain and not ollama:
         # LLM не настроен вовсе — работаем rule-based, чтобы система оставалась живой
         return rule_based(source, item, guideline), "rule-based", 0
 
-    for link in chain:  # ротация при 429/таймауте/5xx (FR-2.3)
+    for link in chain:  # ротация между провайдерами/моделями при 429/таймауте/5xx (FR-2.3)
         try:
             content = await _chat(link, system_prompt, user_prompt)
         except Exception as e:  # noqa: BLE001
-            log.info("scoring model %s failed: %s", link["model"], e)
+            log.info("scoring %s failed: %s", _model_label(link), e)
             continue
         score = parse_score(content)
         if score is None:
@@ -235,7 +302,7 @@ async def score_material(s: AsyncSession, user: User, source: RedSource,
         if score is not None:
             await _spend(s, user.id)
             latency = int((time.monotonic() - started) * 1000)
-            return score, link["model"], latency
+            return score, _model_label(link), latency
 
     if ollama:  # fallback на локальную модель (§2.2.5)
         try:
@@ -245,6 +312,6 @@ async def score_material(s: AsyncSession, user: User, source: RedSource,
             log.info("ollama fallback failed: %s", e)
             score = None
         if score is not None:
-            return score, f"ollama:{ollama['model']}", int((time.monotonic() - started) * 1000)
+            return score, _model_label(ollama), int((time.monotonic() - started) * 1000)
 
     return None, "", int((time.monotonic() - started) * 1000)

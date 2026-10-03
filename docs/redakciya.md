@@ -70,6 +70,69 @@
 5. **Источники**: «Редакция» → Источники → добавить (RSS/Reddit/Bluesky/TG/VK),
    кнопка «Тестовый сбор» показывает предпросмотр. Поллинг стартует сразу.
 
+## Замена LLM-роутера (OpenRouter → другой провайдер)
+
+Скоринг и дайджесты работают с **любым OpenAI-совместимым API** — вызов один и тот же:
+`POST {base_url}/chat/completions`. Роутер — это просто `base_url` + `api_key` + список
+`models`, поэтому замена делается конфигом, без правки кода.
+
+**Порядок цепочки вызовов** (ротация на следующий элемент при 429/таймауте/5xx):
+
+1. Личный LLM пользователя — настройки профиля autoposter (base_url/api_key/model);
+2. Провайдеры из `RED_LLM_PROVIDERS` — по порядку, каждая модель по списку;
+3. Ollama (`RED_OLLAMA_BASE_URL`) — локальный fallback;
+4. Rule-based — без LLM, алерты подавляются (система продолжает работать).
+
+**Варианты замены**
+
+*Вариант А — один роутер вместо OpenRouter* (`.env` бэкенда):
+
+```
+RED_LLM_PROVIDERS='[{"name":"groq","base_url":"https://api.groq.com/openai/v1","api_key":"gsk_...","models":["llama-3.3-70b-versatile"]}]'
+```
+
+*Вариант Б — каскад из нескольких роутеров* (перегоревший сверху автоматически
+заменяется нижним):
+
+```
+RED_LLM_PROVIDERS='[
+  {"name":"openrouter","base_url":"https://openrouter.ai/api/v1","api_key":"sk-or-...",
+   "models":["deepseek/deepseek-chat-v3.1:free","qwen/qwen3-235b-a22b:free"]},
+  {"name":"groq","base_url":"https://api.groq.com/openai/v1","api_key":"gsk_...",
+   "models":["llama-3.3-70b-versatile"]},
+  {"name":"deepseek","base_url":"https://api.deepseek.com/v1","api_key":"sk-...",
+   "models":["deepseek-chat"]}
+]'
+```
+
+*Вариант В — legacy (как было изначально)*: `RED_OPENROUTER_API_KEY` + `RED_MODELS`.
+Работает, только пока `RED_LLM_PROVIDERS` пуст; заданному списку провайдеров
+приоритет отдаётся всегда.
+
+*Вариант Г — без правки .env*: личный LLM в настройках профиля autoposter —
+он всегда первый в цепочке (удобно для персонального теста нового провайдера).
+
+**Нюансы**
+
+- не-Bearer авторизация (Azure-стиль `api-key: ...`) — поле `extra_headers` провайдера;
+- для legacy-OpenRouter атрибуционные заголовки (`HTTP-Referer`, `X-Title`) ставятся
+  автоматически; для кастомных провайдеров — при необходимости через `extra_headers`;
+- JSON в env-переменной пишется в одну строку в одинарных кавычках (формат `.env`);
+  кривой JSON уронит старт бэкенда — это осознанно (fail fast);
+- записи без `base_url` или `models` пропускаются с warning в лог;
+- дневной бюджет запросов (`RED_LLM_DAILY_BUDGET`, по умолчанию 45) общий на все
+  провайдеры — при исчерпании система уходит в rule-based до конца дня.
+
+**Проверка после замены**: `GET /api/web/red/health` → `llm_providers` (имена и
+модели, без ключей) и `llm_personal`; фактический исполнитель пишется в
+`red_scores.model` как «имя:модель» (напр. `groq:llama-3.3-70b-versatile`,
+`ollama:qwen2.5:7b`, `rule-based`) и виден в ленте материалов.
+
+**Примеры OpenAI-совместимых эндпоинтов**: Groq `https://api.groq.com/openai/v1`,
+DeepSeek `https://api.deepseek.com/v1`, Gemini
+`https://generativelanguage.googleapis.com/v1beta/openai`,
+LiteLLM-proxy `http://localhost:4000/v1`, Requesty `https://router.requesty.ai/v1`.
+
 ## Операционный распорядок (как в Приложении А ТЗ)
 
 | Когда | Что | Метка в `app_state` |

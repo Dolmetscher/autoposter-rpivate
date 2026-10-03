@@ -69,19 +69,42 @@ async def test_transcode_requires_video(client, auth_headers):
 async def test_transcode_video(client, auth_headers):
     import io
 
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        # без ffmpeg сервис отвечает понятной ошибкой на любой вход
+        r = await client.post("/api/web/files/media/upload", headers=auth_headers,
+                              files={"file": ("clip.mp4", io.BytesIO(b"\x00" * 128), "video/mp4")})
+        vid = r.json()
+        r = await client.post(f"/api/web/files/{vid['id']}/transcode", headers=auth_headers,
+                              json={"mode": "vertical"})
+        assert r.status_code == 400
+        assert "ffmpeg" in r.json()["detail"]
+        return
+
+    # настоящий крошечный mp4 (фейк из нулей ffmpeg не откроет: moov atom not found)
+    import subprocess
+    import tempfile
+    import os
+
+    with tempfile.TemporaryDirectory() as td:
+        gen = os.path.join(td, "gen.mp4")
+        subprocess.run(
+            [ffmpeg, "-f", "lavfi", "-i", "testsrc=duration=0.3:size=128x128:rate=10",
+             "-pix_fmt", "yuv420p", "-y", gen],
+            capture_output=True, check=True)
+        with open(gen, "rb") as f:
+            mp4 = f.read()
+    assert len(mp4) > 128
+
     r = await client.post("/api/web/files/media/upload", headers=auth_headers,
-                          files={"file": ("clip.mp4", io.BytesIO(b"\x00" * 128), "video/mp4")})
+                          files={"file": ("clip.mp4", io.BytesIO(mp4), "video/mp4")})
     vid = r.json()
     r = await client.post(f"/api/web/files/{vid['id']}/transcode", headers=auth_headers,
                           json={"mode": "vertical"})
-    if shutil.which("ffmpeg") is None:
-        assert r.status_code == 400
-        assert "ffmpeg" in r.json()["detail"]
-    else:
-        assert r.status_code == 200, r.text
-        data = r.json()
-        assert data["type"] == "video" and data["id"] != vid["id"]
-        assert data["name"].endswith("_9x16.mp4")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["type"] == "video" and data["id"] != vid["id"]
+    assert data["name"].endswith("_9x16.mp4")
 
 
 def test_new_adapters_registered():

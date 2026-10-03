@@ -433,5 +433,8 @@ async def red_health(user: User = Depends(get_current_user),
         "alerts_24h": alerts_24h,
         "scoring_queue": queue,
         "llm_budget_left": await llm.budget_left(s, user.id),
+        "llm_providers": llm.providers_summary(),
+        "llm_personal": bool((user.llm_config or {}).get("base_url")
+                             and (user.llm_config or {}).get("api_key")),
         "guideline": await scoring.active_guideline(s, user.id) is not None,
     }
