@@ -39,15 +39,23 @@ class Settings(BaseSettings):
     # опрос Telegram-бота-ассистента (сек)
     tg_bot_poll_seconds: int = 6
 
-    # тарифы (MVP: без биллинга; смена плана вручную в настройках)
+    # тарифы; price_month/price_year — суммы в рублях для биллинга (год = 10 месяцев)
     plans: dict = {
         "free": {"name": "Базовый", "accounts": 3, "posts_month": 100, "sources": 3,
-                 "price": "0 ₽"},
+                 "price": "0 ₽", "price_month": 0, "price_year": 0},
         "pro": {"name": "Профи", "accounts": 15, "posts_month": 1000, "sources": 20,
-                "price": "999 ₽/мес"},
+                "price": "999 ₽/мес", "price_month": 999, "price_year": 9990},
         "business": {"name": "Ультра", "accounts": 50, "posts_month": 10000, "sources": 100,
-                     "price": "2499 ₽/мес"},
+                     "price": "2499 ₽/мес", "price_month": 2499, "price_year": 24990},
     }
+
+    # --- Биллинг: ЮKassa (https://yookassa.ru) ---
+    # shop_id и секретный ключ из личного кабинета; без них оплата недоступна (501),
+    # но ручная активация подписок работает
+    yookassa_shop_id: str = ""
+    yookassa_secret_key: str = ""
+    yookassa_api_url: str = "https://api.yookassa.ru/v3"
+    billing_return_path: str = "/settings"  # куда вернуть пользователя после оплаты
 
     rows_limit: int = 20
     max_media_size_mb: int = 100

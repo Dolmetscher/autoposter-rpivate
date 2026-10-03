@@ -54,6 +54,8 @@ async def guard_role(request: Request, user: User = Depends(get_current_user)) -
     if role == "viewer" and mutating:
         raise HTTPException(403, "Роль «наблюдатель» — доступен только просмотр")
     path = request.url.path
+    if mutating and "/api/web/billing" in path and role not in ("owner", "admin"):
+        raise HTTPException(403, "Оплата тарифа доступна администратору или владельцу")
     is_team_or_plan = "/api/web/team" in path or path.endswith("/settings/plan")
     if is_team_or_plan and mutating and role != "owner":
         raise HTTPException(403, "Управление командой и тарифом доступно только владельцу")

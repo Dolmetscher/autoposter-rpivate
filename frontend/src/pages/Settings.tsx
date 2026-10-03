@@ -12,8 +12,13 @@ interface NotifyConfig {
 }
 interface SettingsData { timezone: string; llm_config: LlmConfig; notify: NotifyConfig }
 interface TokenRow { id: number; name: string; created_at: string; last_used_at: string | null }
-interface Plan { name: string; accounts: number; posts_month: number; sources: number; price: string }
+interface Plan { name: string; accounts: number; posts_month: number; sources: number; price: string; price_month?: number; price_year?: number }
 interface PlansData { plans: Record<string, Plan>; current: string; usage: { accounts: number; posts_month: number; sources: number } }
+interface BillingSub {
+  id: number; plan: string; period: string; status: string; provider: string
+  amount_kop: number; created_at: string | null; paid_at: string | null; valid_until: string | null
+}
+interface BillingData { plans: Record<string, Plan>; current_plan: string; provider_configured: boolean; subscriptions: BillingSub[] }
 
 const TIMEZONES = ['Europe/Moscow', 'Europe/Kaliningrad', 'Europe/Samara', 'Asia/Yekaterinburg',
   'Asia/Novosibirsk', 'Asia/Krasnoyarsk', 'Asia/Irkutsk', 'Asia/Vladivostok', 'UTC']
@@ -22,6 +27,7 @@ export default function SettingsPage({ accounts }: { accounts: Account[] }) {
   const [data, setData] = useState<SettingsData | null>(null)
   const [tokens, setTokens] = useState<TokenRow[]>([])
   const [plans, setPlans] = useState<PlansData | null>(null)
+  const [bill, setBill] = useState<BillingData | null>(null)
   const [newToken, setNewToken] = useState('')
   const [info, setInfo] = useState('')
   const [error, setError] = useState('')
@@ -30,6 +36,7 @@ export default function SettingsPage({ accounts }: { accounts: Account[] }) {
     api.get<SettingsData>('/api/web/settings').then(setData).catch(() => {})
     api.get<{ list: TokenRow[] }>('/api/web/settings/tokens').then((d) => setTokens(d.list)).catch(() => {})
     api.get<PlansData>('/api/web/settings/plans').then(setPlans).catch(() => {})
+    api.get<BillingData>('/api/web/billing').then(setBill).catch(() => {})
   }
   useEffect(() => { load() }, [])
 
@@ -39,6 +46,28 @@ export default function SettingsPage({ accounts }: { accounts: Account[] }) {
   )
 
   if (!data) return <div className="empty">Загрузка…</div>
+
+  const pay = async (plan: string, period: 'month' | 'year') => {
+    setError(''); setInfo('')
+    try {
+      const r = await api.post<{ confirmation_url: string }>('/api/web/billing/pay',
+        { plan, period })
+      window.location.href = r.confirmation_url
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка оплаты')
+    }
+  }
+
+  const activateManually = async (plan: string, period: 'month' | 'year') => {
+    setError(''); setInfo('')
+    try {
+      await api.post('/api/web/billing/activate', { plan, period })
+      setInfo(`Тариф активирован вручную (${period === 'year' ? 'год' : 'месяц'})`)
+      load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка активации')
+    }
+  }
 
   const save = async () => {
     setInfo('')
@@ -211,9 +240,54 @@ export default function SettingsPage({ accounts }: { accounts: Account[] }) {
                               }
                             }}>Переключиться</button>
                   )}
+                  {key !== 'free' && (
+                    <div style={{ marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+                      {bill?.provider_configured ? (
+                        <div className="row" style={{ gap: 6 }}>
+                          <button style={{ flex: 1, justifyContent: 'center' }}
+                                  onClick={() => pay(key, 'month')}>Месяц</button>
+                          <button className="secondary" style={{ flex: 1, justifyContent: 'center' }}
+                                  title="Оплата за год (10 месяцев)"
+                                  onClick={() => pay(key, 'year')}>Год −17%</button>
+                        </div>
+                      ) : (
+                        <div className="hint" style={{ marginBottom: 6 }}>
+                          Онлайн-оплата не настроена (ЮKassa). Доступна ручная активация:
+                        </div>
+                      )}
+                      <button className="ghost" style={{ width: '100%', justifyContent: 'center' }}
+                              title="Деньги получены вне системы (переводом) — активировать вручную"
+                              onClick={() => activateManually(key, 'month')}>Активировать вручную</button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
+            {bill && bill.subscriptions.length > 0 && (
+              <table style={{ marginTop: 14 }}>
+                <thead>
+                  <tr><th>Тариф</th><th>Период</th><th>Сумма</th><th>Статус</th><th>Действует до</th><th>Способ</th></tr>
+                </thead>
+                <tbody>
+                  {bill.subscriptions.map((x) => {
+                    const cls = x.status === 'active' ? 'ok' : x.status === 'pending' ? 'wait'
+                      : x.status === 'canceled' || x.status === 'expired' ? 'err' : 'mut'
+                    const ru: Record<string, string> = {
+                      active: 'активна', pending: 'ожидает оплаты', canceled: 'отменена', expired: 'истекла'}
+                    return (
+                      <tr key={x.id}>
+                        <td>{bill.plans[x.plan]?.name ?? x.plan}</td>
+                        <td>{x.period === 'year' ? 'год' : 'месяц'}</td>
+                        <td>{(x.amount_kop / 100).toLocaleString('ru-RU')} ₽</td>
+                        <td><span className={`badge ${cls}`}>{ru[x.status] ?? x.status}</span></td>
+                        <td>{x.valid_until ? new Date(x.valid_until + 'Z').toLocaleDateString('ru-RU') : '—'}</td>
+                        <td className="hint">{x.provider === 'manual' ? 'вручную' : 'ЮKassa'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
           </>
         )}
       </div>

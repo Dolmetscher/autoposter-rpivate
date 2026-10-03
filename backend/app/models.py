@@ -274,3 +274,21 @@ class AppState(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class BillingSubscription(Base):
+    """Подписка на тариф: платежи через ЮKassa или ручная активация."""
+    __tablename__ = "billing_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    plan: Mapped[str] = mapped_column(String(32))          # pro | business
+    period: Mapped[str] = mapped_column(String(16), default="month")  # month | year
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    # pending | active | canceled | expired
+    provider: Mapped[str] = mapped_column(String(32), default="yookassa")  # yookassa | manual
+    provider_payment_id: Mapped[str] = mapped_column(String(128), default="")
+    amount: Mapped[int] = mapped_column(Integer, default=0)  # в копейках
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)

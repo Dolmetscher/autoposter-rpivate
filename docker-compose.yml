@@ -32,6 +32,10 @@ services:
       SCHEDULER_MODE: celery
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+      # Биллинг: ЮKassa (см. README)
+      YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
+      YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
+      BILLING_RETURN_PATH: ${BILLING_RETURN_PATH:-/settings}
       # Ключи OAuth-приложений (см. README)
       VK_APP_ID: ${VK_APP_ID:-}
       VK_APP_SECRET: ${VK_APP_SECRET:-}
