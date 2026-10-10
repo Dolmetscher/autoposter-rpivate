@@ -27,6 +27,8 @@ services:
   api:
     build: ./backend
     environment: &appenv
+      # Dockerfile по умолчанию слушает 7860; в compose держим 8000 для nginx
+      PORT: 8000
       DATABASE_URL: postgresql+asyncpg://autoposter:autoposter@db/autoposter
       CELERY_BROKER_URL: redis://redis:6379/0
       SCHEDULER_MODE: celery
