@@ -12,7 +12,6 @@ import Accounts from './pages/Accounts'
 import Projects from './pages/Projects'
 import Schedules from './pages/Schedules'
 import Crosspost from './pages/Crosspost'
-import Redakciya from './pages/Redakciya'
 import Team from './pages/Team'
 import SettingsPage from './pages/Settings'
 import { Account, SourceInfo } from './lib/types'
@@ -75,7 +74,6 @@ function Shell() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/schedules" element={<Schedules />} />
           <Route path="/crosspost" element={<Crosspost sources={sources} accounts={accounts} />} />
-          <Route path="/redakciya" element={<Redakciya accounts={accounts} />} />
           <Route path="/team" element={<Team />} />
           <Route path="/settings" element={<SettingsPage accounts={accounts} />} />
       </Route>

@@ -4,7 +4,6 @@
 from fastapi import APIRouter, Depends
 
 from ..deps import guard_role
-from ..redakciya import router as red_router
 from .public import hooppy, yookassa
 from .web import (accounts, ai, analytics, auth, billing, crosspost, dashboard,
                   files, oauth, posts, projects, schedules, settings_api,
@@ -21,7 +20,7 @@ guarded = APIRouter(dependencies=[Depends(guard_role)])
 for r in (accounts.router, sources.router, files.router, posts.router,
           projects.router, schedules.router, crosspost.router, analytics.router,
           ai.router, templates.router, billing.router, settings_api.router,
-          dashboard.router, oauth.router, team.router, red_router.router):
+          dashboard.router, oauth.router, team.router):
     guarded.include_router(r)
 
 api_router.include_router(auth_router, prefix="/api/web")

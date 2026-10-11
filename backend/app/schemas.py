@@ -223,21 +223,3 @@ def next_schedule_slot(slots: list[dict], tz_name: str, from_dt: datetime | None
         return from_dt + timedelta(days=1)
     return min(candidates).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
 
-
-class RedSourceIn(BaseModel):
-    type: str  # rss | reddit | bluesky | tg | vk
-    identifier: str
-    title: str = ""
-    tags: list[str] = []
-    poll_interval_sec: int = 0  # 0 = интервал по умолчанию для типа
-    status: str = "active"      # active | paused
-
-
-class RedGuidelineIn(BaseModel):
-    content: str
-    tags: list[str] = []
-    rescore: bool = False  # перескорить материалы за 72 ч (FR-2.9, S)
-
-
-class RedDigestTextIn(BaseModel):
-    draft_text: str

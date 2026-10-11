@@ -11,7 +11,6 @@ const links: { to: string; label: string; icon: string }[] = [
   { to: '/projects', label: 'Проекты', icon: '📁' },
   { to: '/schedules', label: 'Расписания', icon: '⏰' },
   { to: '/crosspost', label: 'Кросспостинг', icon: '♻️' },
-  { to: '/redakciya', label: 'Редакция', icon: '📰' },
   { to: '/team', label: 'Команда', icon: '👥' },
   { to: '/settings', label: 'Настройки', icon: '⚙️' },
 ]

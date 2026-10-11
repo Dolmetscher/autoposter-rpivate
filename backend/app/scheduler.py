@@ -7,7 +7,6 @@ log = logging.getLogger("scheduler")
 
 
 async def tick_once(session_factory) -> dict:
-    from .redakciya.jobs import run_editorial_jobs
     from .services import billing, crosspost, publish, stats
 
     result = {}
@@ -23,16 +22,6 @@ async def tick_once(session_factory) -> dict:
             await session.rollback()
             log.exception("tick failed")
             result["error"] = True
-    # подсистема «Автоматизированная редакция» — отдельная транзакция,
-    # чтобы её сбой не откатил обычный постинг
-    async with session_factory() as session:
-        try:
-            result["redakciya"] = await run_editorial_jobs(session)
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            log.exception("redakciya jobs failed")
-            result.setdefault("redakciya", {})["error"] = True
     return result
 
 

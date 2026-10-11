@@ -56,22 +56,6 @@ async def _poll_one(s: AsyncSession, user_id: int, token: str, cfg: dict) -> Non
         msg = upd.get("message")
         if msg:
             await _handle_message(s, user_id, token, cfg, msg)
-        cb = upd.get("callback_query")
-        if cb:
-            await _handle_callback(s, user_id, token, cfg, cb)
-
-
-async def _handle_callback(s: AsyncSession, user_id: int, token: str, cfg: dict,
-                           cb: dict) -> None:
-    """Inline-кнопки: пока только «Автоматизированная редакция» (red:*)."""
-    if not (cb.get("data") or "").startswith("red:"):
-        return
-    from ..redakciya import callbacks as red_callbacks
-    try:
-        await red_callbacks.handle_callback(s, user_id, token, cfg, cb)
-    except Exception:
-        log.exception("red callback handler failed")
-        await s.rollback()
 
 
 async def _handle_message(s: AsyncSession, user_id: int, token: str, cfg: dict,
