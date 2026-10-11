@@ -101,6 +101,11 @@ async def transcode_file(file_id: str, payload: TranscodeIn,
                          user: User = Depends(get_current_user),
                          s: AsyncSession = Depends(get_session)):
     """Создаёт копию видео в выбранном формате (9:16 / 1:1 / сжатие). Требует ffmpeg."""
+    from ...config import settings
+    if not settings.transcode_enabled:
+        raise HTTPException(503, "Транскодинг отключён на этом сервере "
+                                 "(TRANSCODE_ENABLED=false) — готовьте видео заранее "
+                                 "или включите настройку")
     mf = await s.get(MediaFile, file_id)
     if not mf or mf.user_id != user.id:
         raise HTTPException(404, "Файл не найден")

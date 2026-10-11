@@ -130,6 +130,74 @@ fly secrets set SECRET_KEY=... DATABASE_URL=sqlite+aiosqlite:///app/data/storage
 fly deploy
 ```
 
+---
+
+## Слабый сервер: 1 vCPU / 1 ГБ RAM / 10 ГБ диск (docker-compose.lean.yml)
+
+Лёгкий профиль: **2 контейнера вместо 5** — PostgreSQL, Redis и Celery-worker
+не запускаются вовсе. БД — SQLite (WAL), планировщик — встроенный
+(`SCHEDULER_MODE=inline`), бэкап — одна папка. Замер бюджета: ОС ~180 МБ +
+Docker ~80 МБ + api ~90–120 МБ + nginx ~10 МБ ≈ **400–500 МБ** постоянной нагрузки.
+
+### Что отключено по умолчанию (включается при апгрейде)
+
+| Отключено | Почему | Как включить |
+|---|---|---|
+| PostgreSQL → SQLite | −150 МБ RAM; нагрузки мало | верните основной `docker-compose.yml` (данные придётся переносить) |
+| Redis + Celery → inline | −180 МБ RAM; тик и так каждые 30 с | там же (`SCHEDULER_MODE=celery`) |
+| ffmpeg-транскодинг | 1 ядро не должно жевать видео | `TRANSCODE_ENABLED=true` + ffmpeg в образ |
+| Большие загрузки: 100/50 МБ → 20/15 МБ | файл буфер не держит в RAM, но диска мало | `MAX_MEDIA_SIZE_MB`, `CROSSPOST_MAX_MEDIA_MB` |
+| Автоочистка медиа: 30 дней | несохранённые (не прикреплённые к постам/шаблонам) файлы удаляются планировщиком | `MEDIA_RETENTION_DAYS` (0 = выкл.) |
+
+### Установка
+
+```bash
+# 1. Подготовка сервера (однократно): swap обязателен — страховка от пиков
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile \
+  && sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf && sudo sysctl -p
+sudo apt update && sudo apt install -y docker.io docker-compose-plugin git
+
+# 2. Код + конфиг
+git clone https://github.com/Dolmetscher/autoposter-rpivate.git autoposter && cd autoposter
+cat > .env <<'EOF'
+SECRET_KEY=длинная-случайная-строка
+PUBLIC_BASE_URL=http://ваш-домен-или-ip
+EOF
+# (опционально) ключи соцсетей и ЮKassa — те же имена, что в docker-compose.yml
+
+# 3. Запуск (dist уже в репо — Node на сервере не нужен)
+docker compose -f docker-compose.lean.yml up -d --build
+```
+
+Проверка: `curl http://localhost/api/healthz` → `{"ok":true}`; UI — на порту 80.
+SQLite-база: `data/autoposter.db` (WAL-режим включён автоматически),
+медиа: `data/storage/`. Первая регистрация — через UI.
+
+### Бэкап и обновления
+
+```bash
+# бэкап по cron (ежедневно в 04:00): БД + медиа одной папкой
+echo '0 4 * * * cd /путь/до/autoposter && tar czf /root/backups/data-$(date +\%F).tar.gz data/' | crontab -
+# (остановка не нужна: WAL-режим допускает копирование файлов)
+
+# обновление
+git pull && docker compose -f docker-compose.lean.yml up -d --build
+```
+
+### Порядок в дисках (10 ГБ)
+
+| Занято | Что |
+|---|---|
+| ~2.5–3 ГБ | ОС Ubuntu/Debian minimal |
+| ~0.6 ГБ | docker-образы (python-slim + nginx-alpine) |
+| 2 ГБ | swap-файл |
+| ~0.2 ГБ | БД (растёт медленно, red-таблиц нет) |
+| остальное (~4 ГБ) | медиа `data/storage` — ограничено лимитами загрузки и автоочисткой 30 дней |
+
+Логи контейнеров ротируются (5 МБ × 2), nginx-access при желании отключается в nginx.conf.
+
 Фронт — туда же через Dockerfile с nginx (см. `nginx.conf`), либо Netlify как в A3.
 
 ---

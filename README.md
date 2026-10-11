@@ -145,6 +145,11 @@ docker compose up -d --build     # nginx:80, api:8000, postgres, redis, worker
 
 Очередь публикаций — Celery+Redis (`SCHEDULER_MODE=celery`), БД — PostgreSQL.
 
+**Слабый сервер (1 vCPU / 1 ГБ RAM / 10 ГБ)?** Используйте
+`docker compose -f docker-compose.lean.yml up -d --build` — 2 контейнера
+(api + nginx) на SQLite и встроенном планировщике, без PostgreSQL/Redis/Celery.
+Подробно — в DEPLOY.md, раздел «Слабый сервер».
+
 ## Настройка реальных соцсетей
 
 Ключи задаются в `.env`/compose (OAuth-кнопки) или вводятся в UI при подключении аккаунта.

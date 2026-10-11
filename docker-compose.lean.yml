@@ -1,0 +1,53 @@
+# Лёгкий профиль для слабого сервера: 1 vCPU / 1 ГБ RAM / 10 ГБ диск.
+# 2 контейнера вместо 5 (без PostgreSQL, Redis и Celery):
+# SQLite + встроенный планировщик (SCHEDULER_MODE=inline).
+# Запуск:  docker compose -f docker-compose.lean.yml up -d --build
+# Обновление: git pull && docker compose -f docker-compose.lean.yml up -d --build
+# Бэкап:    tar czf data-$(date +%F).tar.gz data/  (из папки проекта)
+services:
+  api:
+    build: ./backend
+    environment:
+      SCHEDULER_MODE: inline
+      PORT: 8000            # внутренний порт; наружу торчит только nginx
+      SECRET_KEY: ${SECRET_KEY:?задайте SECRET_KEY в .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+      # предохранители слабого сервера (см. DEPLOY.md, раздел «Слабый сервер»)
+      MAX_MEDIA_SIZE_MB: ${MAX_MEDIA_SIZE_MB:-20}
+      CROSSPOST_MAX_MEDIA_MB: ${CROSSPOST_MAX_MEDIA_MB:-15}
+      MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-30}
+      TRANSCODE_ENABLED: ${TRANSCODE_ENABLED:-false}
+      # биллинг (опционально)
+      YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
+      YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
+      BILLING_RETURN_PATH: ${BILLING_RETURN_PATH:-/settings}
+      # OAuth-ключи соцсетей — те же имена, что в docker-compose.yml
+      VK_APP_ID: ${VK_APP_ID:-}
+      VK_APP_SECRET: ${VK_APP_SECRET:-}
+    volumes:
+      # БД (SQLite) и медиа живут вместе — бэкап одной папкой
+      - ./data:/app/data
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  front:
+    image: nginx:alpine
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+    logging: *logging

@@ -10,7 +10,6 @@ backend/data/
 
 # node
 frontend/node_modules/
-frontend/dist/
 
 # локальные логи и мусор
 *.log

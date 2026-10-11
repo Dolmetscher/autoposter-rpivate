@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     crosspost_max_items_per_poll: int = 5
     crosspost_max_media_mb: int = 50
 
+    # предохранители для слабых серверов (см. docker-compose.lean.yml):
+    # ffmpeg-перекодирование видео тяжёлое для 1 vCPU — можно отключить;
+    # автоудаление медиа, не привязанных к постам/шаблонам, старше N дней (0 = выкл.)
+    transcode_enabled: bool = True
+    media_retention_days: int = 0
+
     # OAuth-приложения (если пусто — в UI остаётся только подключение по токену)
     vk_app_id: str = ""
     vk_app_secret: str = ""

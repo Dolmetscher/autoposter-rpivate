@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 
 from ..config import settings
@@ -48,6 +49,24 @@ async def save_file(rel_path: str, data: bytes) -> None:
     p = local_full(rel_path)
     p.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(p.write_bytes, data)
+
+
+async def save_stream(rel_path: str, src_path: str | Path) -> None:
+    """Помещает готовый временный файл в хранилище, не читая его целиком в RAM.
+    Исходный файл перемещается (local) или выгружается потоком (S3) и удаляется."""
+    src = Path(src_path)
+    if is_s3():
+        def up() -> None:
+            with open(src, "rb") as f:
+                _client().upload_fileobj(f, settings.s3_bucket, rel_path)
+        try:
+            await asyncio.to_thread(up)
+        finally:
+            await asyncio.to_thread(src.unlink, missing_ok=True)
+        return
+    p = local_full(rel_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(shutil.move, str(src), str(p))
 
 
 async def read_file(rel_path: str) -> bytes:

@@ -7,7 +7,7 @@ log = logging.getLogger("scheduler")
 
 
 async def tick_once(session_factory) -> dict:
-    from .services import billing, crosspost, publish, stats
+    from .services import billing, cleanup, crosspost, publish, stats
 
     result = {}
     async with session_factory() as session:
@@ -17,6 +17,7 @@ async def tick_once(session_factory) -> dict:
             result["sources"] = await crosspost.poll_due(session)
             result["stats"] = await stats.update_stats_if_due(session)
             result["billing"] = await billing.expire_if_due(session)
+            result["cleanup"] = await cleanup.cleanup_if_due(session)
             await session.commit()
         except Exception:
             await session.rollback()

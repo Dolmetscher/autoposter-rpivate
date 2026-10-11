@@ -1,4 +1,6 @@
 import mimetypes
+import os
+import tempfile
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
@@ -33,16 +35,22 @@ async def save_upload(user_id: int, file: UploadFile, s: AsyncSession,
     ext = Path(file.filename or "").suffix.lower() or mimetypes.guess_extension(file.content_type or "") or ".bin"
     rel_path = f"posts/{TYPE_DIRS[ftype]}/{folder}/{file_id}{ext}"
 
+    # пишем на диск потоком — файл не собирается целиком в RAM
     max_bytes = settings.max_media_size_mb * 1024 * 1024
-    chunks: list[bytes] = []
     size = 0
-    while chunk := await file.read(1024 * 1024):
-        size += len(chunk)
-        if size > max_bytes:
-            raise HTTPException(413, f"Файл больше {settings.max_media_size_mb} МБ")
-        chunks.append(chunk)
-    data = b"".join(chunks)
-    await storage.save_file(rel_path, data)
+    fd, tmp = tempfile.mkstemp(prefix="ap_upload_")
+    os.close(fd)
+    try:
+        with open(tmp, "wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(413, f"Файл больше {settings.max_media_size_mb} МБ")
+                out.write(chunk)
+        await storage.save_stream(rel_path, tmp)
+    except Exception:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
     mf = MediaFile(
         id=file_id, user_id=user_id, type=ftype,
@@ -99,22 +107,27 @@ async def download_from_url(user_id: int, url: str, kind: str, s: AsyncSession) 
             return await s.get(MediaFile, existing.id)
 
     max_bytes = settings.crosspost_max_media_mb * 1024 * 1024
+    fd, tmp = tempfile.mkstemp(prefix="ap_download_")
+    os.close(fd)
+    size = 0
     try:
-        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-            async with client.stream("GET", url) as resp:
-                resp.raise_for_status()
-                chunks: list[bytes] = []
-                size = 0
-                async for chunk in resp.aiter_bytes(1024 * 256):
-                    size += len(chunk)
-                    if size > max_bytes:
-                        raise ValueError(
-                            f"Медиа из источника больше {settings.crosspost_max_media_mb} МБ")
-                    chunks.append(chunk)
-    except httpx.HTTPError as e:
-        raise ValueError(f"Не удалось скачать медиа: {e}") from e
-    data = b"".join(chunks)
-    await storage.save_file(rel_path, data)
+        with open(tmp, "wb") as out:
+            try:
+                async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+                    async with client.stream("GET", url) as resp:
+                        resp.raise_for_status()
+                        async for chunk in resp.aiter_bytes(1024 * 256):
+                            size += len(chunk)
+                            if size > max_bytes:
+                                raise ValueError(
+                                    f"Медиа из источника больше {settings.crosspost_max_media_mb} МБ")
+                            out.write(chunk)
+            except httpx.HTTPError as e:
+                raise ValueError(f"Не удалось скачать медиа: {e}") from e
+        await storage.save_stream(rel_path, tmp)
+    except Exception:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
     mf = MediaFile(
         id=gen_file_id(), user_id=user_id, type=kind,
