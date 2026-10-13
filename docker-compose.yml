@@ -27,18 +27,15 @@ services:
   api:
     build: ./backend
     environment: &appenv
-      # Dockerfile по умолчанию слушает 7860; в compose держим 8000 для nginx
       PORT: 8000
       DATABASE_URL: postgresql+asyncpg://autoposter:autoposter@db/autoposter
       CELERY_BROKER_URL: redis://redis:6379/0
       SCHEDULER_MODE: celery
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
-      # Биллинг: ЮKassa (см. README)
       YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
       YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
       BILLING_RETURN_PATH: ${BILLING_RETURN_PATH:-/settings}
-      # Ключи OAuth-приложений (см. README)
       VK_APP_ID: ${VK_APP_ID:-}
       VK_APP_SECRET: ${VK_APP_SECRET:-}
       OK_APP_ID: ${OK_APP_ID:-}
@@ -65,7 +62,7 @@ services:
     depends_on:
       - api
 
-front:
+  front:
     build:
       context: .
       dockerfile: Dockerfile.front
