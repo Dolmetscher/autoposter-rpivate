@@ -69,8 +69,6 @@ class Settings(BaseSettings):
     media_retention_days: int = 0
 
     # OAuth-приложения (если пусто — в UI остаётся только подключение по токену)
-    vk_app_id: str = ""
-    vk_app_secret: str = ""
     ok_app_id: str = ""
     ok_app_secret: str = ""
     ok_app_public_key: str = ""

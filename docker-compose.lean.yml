@@ -22,8 +22,6 @@ services:
       YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
       BILLING_RETURN_PATH: ${BILLING_RETURN_PATH:-/settings}
       # OAuth-ключи соцсетей — те же имена, что в docker-compose.yml
-      VK_APP_ID: ${VK_APP_ID:-}
-      VK_APP_SECRET: ${VK_APP_SECRET:-}
     volumes:
       # БД (SQLite) и медиа живут вместе — бэкап одной папкой
       - ./data:/app/data

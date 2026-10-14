@@ -1,12 +1,11 @@
-"""ВКонтакте: посты на стене сообществ/профиля, фото, видео/клипы, истории, пин,
-автоудаление, источники кросспостинга (wall.get)."""
+"""ВКонтакте: публикация в сообщество по ключу доступа сообщества (community token) —
+посты на стене, фото, видео/клипы, истории, пин, автоудаление, источники кросспостинга."""
 from __future__ import annotations
 
 import re
 
 import httpx
 
-from ..config import settings
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes
 
 API = "https://api.vk.com/method"
@@ -38,45 +37,63 @@ class VKAdapter(SocialAdapter):
 
     # ---------- подключение ----------
     def connect_requires(self) -> list[dict]:
-        return [{"name": "access_token", "label": "Access token VK (vk.com/dev)",
-                 "required": True}]
+        return [
+            {"name": "access_token", "label": "Ключ доступа сообщества (токен группы)",
+             "required": True},
+            {"name": "group_ref",
+             "label": "Ссылка на группу или её ID (можно не заполнять — определим сами)",
+             "required": False},
+            {"name": "name", "label": "Название аккаунта в списке (необязательно)",
+             "required": False},
+        ]
 
-    def oauth_authorize_url(self, state: str) -> str | None:
-        if not settings.vk_app_id:
-            return None
-        redirect = f"{settings.public_base_url}/api/web/oauth/vk/callback"
-        return ("https://oauth.vk.com/authorize?client_id={}&redirect_uri={}"
-                "&scope=wall,photos,video,stories,groups,offline,manage&response_type=code"
-                "&v={}&state={}").format(settings.vk_app_id, redirect, V, state)
+    @staticmethod
+    def _normalize_group_ref(ref: str) -> str:
+        """'https://vk.com/club123' / 'public77' / '@name' / '-123' → '123' или 'name'."""
+        ref = (ref or "").strip()
+        if not ref:
+            return ""
+        m = re.search(r"(?:club|public)(\d+)", ref, re.I)
+        if m:
+            return m.group(1)
+        ref = ref.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+        return ref.lstrip("@").lstrip("-").strip()
 
-    async def oauth_exchange(self, code: str) -> dict:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get("https://oauth.vk.com/access_token", params={
-                "client_id": settings.vk_app_id, "client_secret": settings.vk_app_secret,
-                "redirect_uri": f"{settings.public_base_url}/api/web/oauth/vk/callback",
-                "code": code,
-            })
-        data = r.json()
-        if "access_token" not in data:
-            raise AdapterError(f"VK OAuth: {data.get('error_description', 'ошибка')}")
-        return {"access_token": data["access_token"]}
+    @staticmethod
+    def _first_group(resp) -> dict:  # noqa: ANN001
+        if isinstance(resp, dict):
+            items = resp.get("groups") or [resp]
+        else:
+            items = resp
+        if not items:
+            raise AdapterError("VK groups.getById: пустой ответ")
+        return items[0]
 
     async def fetch_pages(self, account, extra: dict | None = None) -> list[PageInfo]:
-        token = account.credentials.get("access_token")
+        creds = account.credentials
+        token = creds.get("access_token")
         if not token:
-            raise AdapterError("VK: не указан access_token")
-        pages: list[PageInfo] = []
-        me = await self.call("users.get", token, fields="photo_100")
-        if me:
-            u = me[0]
-            pages.append(PageInfo(str(u["id"]), f"{u.get('first_name', '')} {u.get('last_name', '')}".strip(),
-                                  u.get("photo_100", ""), kind="user"))
-        groups = await self.call("groups.get", token, filter="admin,editor,moder",
-                                 extended=1, fields="photo_100,can_post")
-        for g in groups.get("items", []):
-            pages.append(PageInfo(str(g["id"]), g.get("name", ""), g.get("photo_100", ""),
-                                  kind="group", can_post=bool(g.get("can_post", True))))
-        return pages
+            raise AdapterError("VK: не указан ключ доступа сообщества (токен)")
+
+        ref = self._normalize_group_ref(
+            (extra or {}).get("group_ref") or creds.get("group_ref") or "")
+        if ref:
+            group = self._first_group(await self.call(
+                "groups.getById", token, group_id=ref, fields="photo_100"))
+        else:
+            # у токена сообщества groups.getById без group_id возвращает само сообщество
+            try:
+                group = self._first_group(await self.call(
+                    "groups.getById", token, fields="photo_100"))
+            except AdapterError as e:
+                raise AdapterError(
+                    "VK: не удалось определить сообщество по токену — укажите "
+                    "ссылку на группу или её ID при подключении") from e
+
+        name_override = creds.get("name") or (extra or {}).get("name")
+        return [PageInfo(str(group["id"]),
+                         (name_override or group.get("name") or "Сообщество ВК").strip(),
+                         group.get("photo_100", ""), kind="group")]
 
     # ---------- публикация ----------
     async def _upload_photo(self, client: httpx.AsyncClient, token: str, group_id: int | None,

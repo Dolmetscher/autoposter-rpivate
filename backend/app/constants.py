@@ -35,7 +35,7 @@ class SourceInfo:
 SOURCES: dict[int, SourceInfo] = {
     1: SourceInfo(1, "vk", "ВКонтакте", "vk",
                   (C_POST, C_PHOTO, C_VIDEO, C_STORY, C_CLIP, C_CHANNEL, C_ALBUM),
-                  oauth=True, color="#0077ff"),
+                  color="#0077ff"),
     2: SourceInfo(2, "ok", "Одноклассники", "ok", (C_POST, C_PHOTO, C_VIDEO),
                   oauth=True, color="#ff7700"),
     3: SourceInfo(3, "facebook", "Facebook", "facebook",
