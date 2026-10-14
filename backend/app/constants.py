@@ -40,8 +40,8 @@ SOURCES: dict[int, SourceInfo] = {
                   oauth=True, color="#ff7700"),
     3: SourceInfo(3, "facebook", "Facebook", "facebook",
                   (C_POST, C_PHOTO, C_VIDEO), color="#1877f2"),
-    4: SourceInfo(4, "twitter", "Твиттер/X", None, (C_POST, C_PHOTO, C_VIDEO),
-                  color="#1d9bf0"),
+    4: SourceInfo(4, "twitter", "Твиттер/X", "twitter",
+                  (C_POST, C_PHOTO, C_VIDEO), color="#1d9bf0"),
     6: SourceInfo(6, "instagram", "Instagram", "instagram",
                   (C_POST, C_PHOTO, C_VIDEO, C_STORY, C_REEL), color="#e1306c"),
     9: SourceInfo(9, "telegram", "Telegram", "telegram",
@@ -64,19 +64,26 @@ SOURCES: dict[int, SourceInfo] = {
                    color="#ff0000"),
     20: SourceInfo(20, "dzen", "Дзен", "dzen", (C_POST,), experimental=True,
                    color="#ffd54d"),
+    12: SourceInfo(12, "threads", "Тредс", "threads",
+                   (C_POST, C_PHOTO, C_VIDEO), color="#101010"),
+    19: SourceInfo(19, "tumblr", "Тамблер", "tumblr", (C_POST, C_PHOTO),
+                   color="#36465d"),
     99: SourceInfo(99, "mock", "Песочница (без сети)", "mock", ALL_CAPS,
                    color="#8e44ad"),
 }
 
-# Сети hooppy, которые появятся в будущих версиях
+# Сети без публичного API публикации: адаптеры-заглушки возвращают понятную ошибку
 PLANNED_SOURCES: dict[int, SourceInfo] = {
-    5: SourceInfo(5, "moimir", "Мой Мир", None, color="#168de2"),
-    7: SourceInfo(7, "viber", "Вайбер", None, color="#7360f2"),
-    12: SourceInfo(12, "threads", "Тредс", None, color="#101010"),
-    16: SourceInfo(16, "whatsapp", "Вотсап", None, color="#25d366"),
-    18: SourceInfo(18, "yappy", "Яппи", None, color="#ff4b4b"),
-    19: SourceInfo(19, "tumblr", "Тамблер", None, color="#36465d"),
-    21: SourceInfo(21, "vibes", "Вайбс", None, color="#7b61ff"),
+    5: SourceInfo(5, "moimir", "Мой Мир", "moimir", (C_POST,), experimental=True,
+                  color="#168de2"),
+    7: SourceInfo(7, "viber", "Вайбер", "viber", (C_POST,), experimental=True,
+                  color="#7360f2"),
+    16: SourceInfo(16, "whatsapp", "Вотсап", "whatsapp", (C_POST,), experimental=True,
+                   color="#25d366"),
+    18: SourceInfo(18, "yappy", "Яппи", "yappy", (C_VIDEO,), experimental=True,
+                   color="#ff4b4b"),
+    21: SourceInfo(21, "vibes", "Вайбс", "vibes", (C_VIDEO,), experimental=True,
+                   color="#7b61ff"),
 }
 
 SOURCE_BY_SLUG = {s.slug: s for s in list(SOURCES.values()) + list(PLANNED_SOURCES.values())}

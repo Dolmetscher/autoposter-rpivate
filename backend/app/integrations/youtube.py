@@ -2,13 +2,15 @@
 каналы, удаление, источники кросспостинга (RSS загрузок канала)."""
 from __future__ import annotations
 
+import os
 import re
-from datetime import datetime, timezone
+import tempfile
+from pathlib import Path
 
 import httpx
 
 from ..config import settings
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes
+from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes_to_file
 
 
 class YouTubeAdapter(SocialAdapter):
@@ -82,21 +84,26 @@ class YouTubeAdapter(SocialAdapter):
             "status": {"privacyStatus": st.get("youtube_privacy", "public"),
                        "selfDeclaredMadeForKids": False},
         }
-        data = await read_media_bytes(video)
-        size = len(data)
-
-        async with httpx.AsyncClient(timeout=600) as client:
-            init = await client.post(
-                "https://www.googleapis.com/upload/youtube/v3/videos",
-                params={"uploadType": "resumable", "part": "snippet,status"},
-                headers={"Authorization": f"Bearer {token}",
-                         "X-Upload-Content-Length": str(size),
-                         "X-Upload-Content-Type": "video/mp4",
-                         "Content-Type": "application/json"},
-                json=metadata)
-            if init.status_code >= 300:
-                raise AdapterError(f"YouTube init: {init.text[:300]}")
-            upload = await client.put(init.headers["Location"], content=data)
+        # файл не держим в RAM: пишем во временный файл и отдаём поток
+        fd, tmp = tempfile.mkstemp(prefix="ap_yt_")
+        os.close(fd)
+        try:
+            size = await read_media_bytes_to_file(video, tmp)
+            async with httpx.AsyncClient(timeout=600) as client:
+                init = await client.post(
+                    "https://www.googleapis.com/upload/youtube/v3/videos",
+                    params={"uploadType": "resumable", "part": "snippet,status"},
+                    headers={"Authorization": f"Bearer {token}",
+                             "X-Upload-Content-Length": str(size),
+                             "X-Upload-Content-Type": "video/mp4",
+                             "Content-Type": "application/json"},
+                    json=metadata)
+                if init.status_code >= 300:
+                    raise AdapterError(f"YouTube init: {init.text[:300]}")
+                with open(tmp, "rb") as f:
+                    upload = await client.put(init.headers["Location"], content=f)
+        finally:
+            Path(tmp).unlink(missing_ok=True)
         if upload.status_code >= 300:
             raise AdapterError(f"YouTube upload: {upload.text[:300]}")
         vid = upload.json()["id"]
@@ -145,10 +152,9 @@ class YouTubeAdapter(SocialAdapter):
         for e in entries:
             vid = re.search(r"<yt:videoId>([^<]+)</yt:videoId>", e)
             title = re.search(r"<title>([^<]+)</title>", e)
-            published = re.search(r"<published>([^<]+)</published>", e)
             if not vid:
                 continue
-                items.append(SourceItem(
+            items.append(SourceItem(
                 external_id=vid.group(1),
                 text=(title.group(1) if title else "") + f"\nhttps://youtu.be/{vid.group(1)}",
                 url=f"https://youtu.be/{vid.group(1)}"))

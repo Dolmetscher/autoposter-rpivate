@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     tiktok_client_key: str = ""
     tiktok_client_secret: str = ""
 
+    # Twitter/X OAuth 1.0a: ключи из Developer Portal (можно задать и на аккаунте в UI)
+    twitter_api_key: str = ""
+    twitter_api_secret: str = ""
+
     default_rewrite_prompt: str = (
         "Перепиши текст поста другими словами, сохранив смысл, тон, эмодзи, "
         "хэштеги и ссылки. Сделай текст уникальным, но естественным. "

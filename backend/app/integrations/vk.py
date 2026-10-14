@@ -175,7 +175,6 @@ class VKAdapter(SocialAdapter):
         return data["response"]
 
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
-        token = None
         creds = page.account.credentials
         token = creds.get("access_token")
         if not token:

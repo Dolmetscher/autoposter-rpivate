@@ -56,9 +56,6 @@ class TelegramAdapter(SocialAdapter):
                 chat = data["result"]
                 cid = chat["id"]
                 kind = "channel" if chat.get("type") == "channel" else "group"
-                member = await client.get(f"https://api.telegram.org/bot{token}/getChatMember",
-                                          params={"chat_id": cid, "user_id": 0})
-                can_post = False
                 pages.append(PageInfo(str(cid), chat.get("title") or chat.get("username") or ref,
                                       "", kind=kind, can_post=True))
         return pages

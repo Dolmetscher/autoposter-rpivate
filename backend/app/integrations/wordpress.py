@@ -49,6 +49,7 @@ class WordPressAdapter(SocialAdapter):
         client, api = self._api(page.account.credentials)
         try:
             media_ids: list[int] = []
+            media_urls: dict[int, str] = {}
             for m in content.media + content.documents:
                 data = await read_media_bytes(m)
                 r = await client.post(f"{api}/media",
@@ -56,7 +57,9 @@ class WordPressAdapter(SocialAdapter):
                                       headers={"Content-Disposition": f'attachment; filename="{m.name}"'})
                 if r.status_code >= 300:
                     raise AdapterError(f"WP media: {r.text[:200]}")
-                media_ids.append(r.json()["id"])
+                uploaded = r.json()
+                media_ids.append(uploaded["id"])
+                media_urls[uploaded["id"]] = uploaded.get("source_url", "")
 
             text = (content.text or "").strip()
             if not text and not media_ids:
@@ -74,7 +77,8 @@ class WordPressAdapter(SocialAdapter):
                 payload["featured_media"] = media_ids[0]
                 if len(media_ids) > 1:
                     payload["content"] = paragraphs + "".join(
-                        f'<p><img src="/?p={mid}" alt=""/></p>' for mid in media_ids[1:])
+                        f'<p><img src="{media_urls.get(mid, "")}" alt=""/></p>'
+                        for mid in media_ids[1:] if media_urls.get(mid))
             r = await client.post(f"{api}/posts", json=payload)
             if r.status_code >= 300:
                 raise AdapterError(f"WP posts: {r.text[:200]}")

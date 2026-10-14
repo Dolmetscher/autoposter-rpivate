@@ -33,7 +33,11 @@ async def test_sources_list(client, auth_headers):
     assert srcs[99]["implemented"] is True
     assert srcs[3]["implemented"] is True   # Facebook — реализован
     assert srcs[10]["implemented"] is True  # Вордпресс — реализован
-    assert srcs[4]["implemented"] is False  # Twitter/X — пока запланирована
+    assert srcs[4]["implemented"] is True   # Twitter/X — реализован (API v2)
+    assert srcs[12]["implemented"] is True  # Тредс — реализован
+    assert srcs[19]["implemented"] is True  # Тамблер — реализован
+    assert srcs[7]["implemented"] is True   # Вайбер — заглушка с понятной ошибкой
+    assert srcs[16]["experimental"] is True # Вотсап — экспериментальная заглушка
 
 
 async def test_connect_mock_account(client, auth_headers):

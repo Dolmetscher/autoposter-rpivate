@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -57,6 +58,26 @@ async def read_media_bytes(media) -> bytes:  # noqa: ANN001
     """Байты медиафайла из хранилища (local или S3) — для загрузки в соцсеть."""
     from ..services import storage
     return await storage.read_file(media.file_path)
+
+
+async def read_media_bytes_to_file(media, dst_path: str) -> int:  # noqa: ANN001
+    """Записывает медиафайл из хранилища в dst_path потоком (не в RAM),
+    возвращает размер в байтах. Для больших видео (YouTube/Rutube)."""
+    import shutil
+
+    from ..services import storage
+
+    if storage.is_s3():
+        def down() -> int:
+            obj = storage._client().get_object(Bucket=storage.settings.s3_bucket,
+                                               Key=media.file_path)
+            with obj["Body"] as src, open(dst_path, "wb") as dst:
+                shutil.copyfileobj(src, dst, 1024 * 1024)
+            return int(obj.get("ContentLength", os.path.getsize(dst_path)))
+        return await asyncio.to_thread(down)
+    src = storage.local_full(media.file_path)
+    await asyncio.to_thread(shutil.copyfile, str(src), dst_path)
+    return src.stat().st_size
 
 
 class SocialAdapter(ABC):
