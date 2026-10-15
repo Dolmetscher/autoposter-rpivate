@@ -36,10 +36,13 @@ async def test_empty_post_rejected(client, auth_headers, mock_pages):
 
 
 async def test_scheduled_post_and_tick(client, auth_headers, mock_pages):
+    from sqlalchemy import select
+
     from app.db import SessionFactory
+    from app.models import Post
     from app.scheduler import tick_once
 
-    when = (utcnow() + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    when = (utcnow() + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
     r = await client.post("/api/web/posts", headers=auth_headers, json={
         "texts": [{"text": "Отложенный пост"}],
         "page_ids": mock_pages[:1],
@@ -50,13 +53,17 @@ async def test_scheduled_post_and_tick(client, auth_headers, mock_pages):
     post_id = r.json()["id"]
     assert r.json()["status"] == "scheduled"
 
-    # тик до срока — ничего не публикуется
+    # тик до срока — ничего не публикуется (срок в будущем, без гонок по часам)
     await tick_once(SessionFactory)
     r = await client.get(f"/api/web/posts/{post_id}", headers=auth_headers)
     assert r.json()["status"] == "scheduled"
 
-    # тик после срока
-    await __import__("asyncio").sleep(1.2)
+    # подвину срок в прошлое напрямую: тест не зависит от сна и границ секунд
+    async with SessionFactory() as s:
+        post = (await s.execute(
+            select(Post).where(Post.id == post_id))).scalar_one()
+        post.publication_date = utcnow() - timedelta(seconds=1)
+        await s.commit()
     await tick_once(SessionFactory)
     r = await client.get(f"/api/web/posts/{post_id}", headers=auth_headers)
     assert r.json()["status"] == "published"
