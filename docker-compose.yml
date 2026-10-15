@@ -1,45 +1,31 @@
-# Продакшен-режим: postgres + redis + api + worker(beat) + nginx(front+api)
-# Локальная разработка без docker: см. README («Быстрый старт»).
+# Лёгкий профиль для слабого сервера: 1 vCPU / 1 ГБ RAM / 10 ГБ диск.
+# 2 контейнера вместо 5 (без PostgreSQL, Redis и Celery):
+# SQLite + встроенный планировщик (SCHEDULER_MODE=inline).
 
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: autoposter
-      POSTGRES_PASSWORD: autoposter
-      POSTGRES_DB: autoposter
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autoposter"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-api:
+  api:
     build: ./backend
-    environment: &appenv
-      PORT: 8000
-      DATABASE_URL: postgresql+asyncpg://autoposter:autoposter@db/autoposter
-      CELERY_BROKER_URL: redis://redis:6379/0
-      SCHEDULER_MODE: celery
+    environment:
+      SCHEDULER_MODE: inline
+      PORT: 8000            # внутренний порт; наружу торчит только nginx
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
-      # Настройки прокси для обхода блокировок Meta и Twitter:
-      HTTP_PROXY: "http://lqnhguzj:7kltfghnabnv@64.137.10.153:5803"
-      HTTPS_PROXY: "http://lqnhguzj:7kltfghnabnv@64.137.10.153:5803"
-      NO_PROXY: "localhost,127.0.0.1,db,redis"
+      # Настройки прокси Webshare для обхода блокировок Meta и Twitter:
+      HTTP_PROXY: "http://ЛОГИН:ПАРОЛЬ@IP:ПОРТ"
+      HTTPS_PROXY: "http://ЛОГИН:ПАРОЛЬ@IP:ПОРТ"
+      NO_PROXY: "localhost,127.0.0.1"
+      # предохранители слабого сервера
+      MAX_MEDIA_SIZE_MB: ${MAX_MEDIA_SIZE_MB:-20}
+      CROSSPOST_MAX_MEDIA_MB: ${CROSSPOST_MAX_MEDIA_MB:-15}
+      MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-30}
+      TRANSCODE_ENABLED: ${TRANSCODE_ENABLED:-false}
+      # биллинг (опционально)
       YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
       YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
       BILLING_RETURN_PATH: ${BILLING_RETURN_PATH:-/settings}
+      # OAuth-ключи соцсетей
+      VK_APP_ID: ${VK_APP_ID:-}
+      VK_APP_SECRET: ${VK_APP_SECRET:-}
       OK_APP_ID: ${OK_APP_ID:-}
       OK_APP_SECRET: ${OK_APP_SECRET:-}
       OK_APP_PUBLIC_KEY: ${OK_APP_PUBLIC_KEY:-}
@@ -48,21 +34,20 @@ api:
       TIKTOK_CLIENT_KEY: ${TIKTOK_CLIENT_KEY:-}
       TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET:-}
     volumes:
-      - storage:/app/data
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  worker:
-    build: ./backend
-    command: celery -A app.celery_app worker -B -l info
-    environment: *appenv
-    volumes:
-      - storage:/app/data
-    depends_on:
-      - api
+      # Защищенный том: SQLite-база и медиафайлы не удалятся при пересборках Portainer
+      - app_data:/app/data
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   front:
     build:
@@ -72,7 +57,8 @@ api:
       - "80:80"
     depends_on:
       - api
+    restart: unless-stopped
+    logging: *logging
 
 volumes:
-  pgdata:
-  storage:
+  app_data:
