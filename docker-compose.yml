@@ -24,7 +24,7 @@ services:
       timeout: 3s
       retries: 10
 
-  api:
+api:
     build: ./backend
     environment: &appenv
       PORT: 8000
@@ -33,6 +33,10 @@ services:
       SCHEDULER_MODE: celery
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+      # Настройки прокси для обхода блокировок Meta и Twitter:
+      HTTP_PROXY: "http://lqnhguzj:7kltfghnabnv@64.137.10.153:5803"
+      HTTPS_PROXY: "http://lqnhguzj:7kltfghnabnv@64.137.10.153:5803"
+      NO_PROXY: "localhost,127.0.0.1,db,redis"
       YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
       YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
       BILLING_RETURN_PATH: ${BILLING_RETURN_PATH:-/settings}
