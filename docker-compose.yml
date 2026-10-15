@@ -11,8 +11,8 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
       # Настройки прокси Webshare для обхода блокировок Meta и Twitter:
-      HTTP_PROXY: "http://ЛОГИН:ПАРОЛЬ@IP:ПОРТ"
-      HTTPS_PROXY: "http://ЛОГИН:ПАРОЛЬ@IP:ПОРТ"
+      HTTP_PROXY: "http://lqnhguzj:7kltfghnabnv@64.137.10.153:5803"
+      HTTPS_PROXY: "http://lqnhguzj:7kltfghnabnv@64.137.10.153:5803"
       NO_PROXY: "localhost,127.0.0.1"
       # предохранители слабого сервера
       MAX_MEDIA_SIZE_MB: ${MAX_MEDIA_SIZE_MB:-20}
