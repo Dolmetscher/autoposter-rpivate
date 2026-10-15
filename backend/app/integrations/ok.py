@@ -86,20 +86,33 @@ class OKAdapter(SocialAdapter):
             # (picAvatar и т.п.) даёт ошибку "Invalid parameter fields value"
             infos = await self.call("group.getInfo", creds,
                                     {"uids": ",".join(ids), "fields": "name,status"})
-            by_id: dict = {}
-            if isinstance(infos, dict):  # API может вернуть словарь id → группа
-                by_id = {str(k): v for k, v in infos.items() if isinstance(v, dict)}
-            elif isinstance(infos, list):
-                for g in infos:  # ...или прямой массив групп (обычный случай)
-                    if not isinstance(g, dict):
-                        continue
-                    key = g.get("uid") or g.get("groupId") or g.get("id")
-                    if key:
-                        by_id[str(key)] = g
-            for gid in ids:
-                info = by_id.get(str(gid), {})
-                pages.append(PageInfo(str(gid), info.get("name", ""), "",
-                                      kind="group", can_post=info.get("status") != "BLOCKED"))
+            # нормализуем к списку групп: API отдаёт массив, словарь id → группа
+            # или единичный объект группы (при одном uid)
+            if isinstance(infos, list):
+                groups_list = [g for g in infos if isinstance(g, dict)]
+            elif isinstance(infos, dict):
+                if infos and all(isinstance(v, dict) for v in infos.values()):
+                    groups_list = list(infos.values())
+                else:
+                    groups_list = [infos]
+            else:
+                groups_list = []
+
+            def gkey(g: dict) -> str:
+                key = g.get("uid") or g.get("groupId") or g.get("id") or ""
+                return str(key)
+
+            by_id = {gkey(g): g for g in groups_list if gkey(g)}
+            if by_id:
+                infos_for = [by_id.get(str(gid), {}) for gid in ids]
+            else:
+                # id в ответе нет — маппим по порядку запроса
+                infos_for = (groups_list + [{}] * len(ids))[:len(ids)]
+            for gid, info in zip(ids, infos_for):
+                name = info.get("name") or info.get("NAME") or ""
+                status = info.get("status") or info.get("STATUS") or ""
+                pages.append(PageInfo(str(gid), name, "",
+                                      kind="group", can_post=status != "BLOCKED"))
         return pages
 
     # ---------- публикация ----------

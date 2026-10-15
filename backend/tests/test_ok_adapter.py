@@ -68,3 +68,43 @@ async def test_fetch_pages_no_groups(monkeypatch):
     }))
     pages = await OKAdapter().fetch_pages(_A())
     assert len(pages) == 1 and pages[0].kind == "user"
+
+
+def _base_responses(info_response):
+    return {
+        "users.getCurrentUser": {"uid": "111", "name": "Я"},
+        "group.getUserGroupsV2": {"groups": [{"groupId": "g1"}, {"groupId": "g2"}]},
+        "group.getInfo": info_response,
+    }
+
+
+async def test_fetch_pages_single_group_object(monkeypatch):
+    """Один uid: API может вернуть объект группы напрямую, а не массив/словарь."""
+    monkeypatch.setattr(OKAdapter, "call", _fake_call(_base_responses(
+        {"uid": "g1", "name": "Моя группа", "status": "ACTIVE"})))
+    pages = await OKAdapter().fetch_pages(_A({"groupId": "g1"}))
+    assert len(pages) == 3
+    g = pages[1]
+    assert g.social_page_id == "g1" and g.name == "Моя группа"
+
+
+async def test_fetch_pages_names_without_id_keys(monkeypatch):
+    """В ответе нет uid/groupId — названия маппятся по порядку запроса."""
+    monkeypatch.setattr(OKAdapter, "call", _fake_call(_base_responses([
+        {"name": "Первая", "status": "ACTIVE"},
+        {"name": "Вторая", "status": "ACTIVE"},
+    ])))
+    pages = await OKAdapter().fetch_pages(_A())
+    assert [p.name for p in pages[1:]] == ["Первая", "Вторая"]
+
+
+async def test_fetch_pages_uppercase_fields(monkeypatch):
+    """Поля в UPPERCASE (как в перечислении GroupBeanFields) тоже читаются."""
+    monkeypatch.setattr(OKAdapter, "call", _fake_call(_base_responses([
+        {"uid": "g1", "NAME": "Заглавная", "STATUS": "ACTIVE"},
+        {"uid": "g2", "name": "Обычная", "status": "BLOCKED"},
+    ])))
+    pages = await OKAdapter().fetch_pages(_A())
+    names = [p.name for p in pages[1:]]
+    assert names == ["Заглавная", "Обычная"]
+    assert [p.can_post for p in pages[1:]] == [True, False]
