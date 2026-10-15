@@ -79,10 +79,11 @@ class OKAdapter(SocialAdapter):
         ids = [g["groupId"] for g in groups.get("groups", []) or []]
         if ids:
             infos = await self.call("group.getInfo", creds,
-                                    {"uids": ",".join(ids), "fields": "name,picAvatar,status"})
+                        {"uids": ",".join(ids), "fields": "name,pic128x128,pic50x50,status"})
             for gid in ids:
                 info = infos.get(gid, {})
-                pages.append(PageInfo(gid, info.get("name", ""), info.get("picAvatar", ""),
+                avatar = info.get("pic128x128") or info.get("pic50x50") or info.get("pic_base", "")
+                pages.append(PageInfo(gid, info.get("name", ""), avatar,
                                       kind="group", can_post=info.get("status") != "BLOCKED"))
         return pages
 
