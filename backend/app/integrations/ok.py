@@ -78,12 +78,13 @@ class OKAdapter(SocialAdapter):
         groups = await self.call("group.getUserGroupsV2", creds, {"count": 50})
         ids = [g["groupId"] for g in groups.get("groups", []) or []]
         if ids:
+            # только валидные для GroupBeanFields поля: запрос аватарок
+            # (picAvatar и т.п.) даёт ошибку "Invalid parameter fields value"
             infos = await self.call("group.getInfo", creds,
-                        {"uids": ",".join(ids), "fields": "name,pic128x128,pic50x50,status"})
+                                    {"uids": ",".join(ids), "fields": "name,status"})
             for gid in ids:
                 info = infos.get(gid, {})
-                avatar = info.get("pic128x128") or info.get("pic50x50") or info.get("pic_base", "")
-                pages.append(PageInfo(gid, info.get("name", ""), avatar,
+                pages.append(PageInfo(gid, info.get("name", ""), "",
                                       kind="group", can_post=info.get("status") != "BLOCKED"))
         return pages
 
