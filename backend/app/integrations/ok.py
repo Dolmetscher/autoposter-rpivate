@@ -74,17 +74,31 @@ class OKAdapter(SocialAdapter):
         creds = account.credentials
         me = await self.call("users.getCurrentUser", creds,
                              {"fields": "uid,name,pic_1"})
+        if not isinstance(me, dict) or not me.get("uid"):
+            raise AdapterError("OK: не удалось получить профиль "
+                               "(проверьте access_token и права приложения)")
         pages = [PageInfo(str(me["uid"]), me.get("name", ""), me.get("pic_1", ""), kind="user")]
         groups = await self.call("group.getUserGroupsV2", creds, {"count": 50})
-        ids = [g["groupId"] for g in groups.get("groups", []) or []]
+        raw_groups = groups.get("groups", []) if isinstance(groups, dict) else []
+        ids = [g["groupId"] for g in raw_groups or [] if isinstance(g, dict) and g.get("groupId")]
         if ids:
             # только валидные для GroupBeanFields поля: запрос аватарок
             # (picAvatar и т.п.) даёт ошибку "Invalid parameter fields value"
             infos = await self.call("group.getInfo", creds,
                                     {"uids": ",".join(ids), "fields": "name,status"})
+            by_id: dict = {}
+            if isinstance(infos, dict):  # API может вернуть словарь id → группа
+                by_id = {str(k): v for k, v in infos.items() if isinstance(v, dict)}
+            elif isinstance(infos, list):
+                for g in infos:  # ...или прямой массив групп (обычный случай)
+                    if not isinstance(g, dict):
+                        continue
+                    key = g.get("uid") or g.get("groupId") or g.get("id")
+                    if key:
+                        by_id[str(key)] = g
             for gid in ids:
-                info = infos.get(gid, {})
-                pages.append(PageInfo(gid, info.get("name", ""), "",
+                info = by_id.get(str(gid), {})
+                pages.append(PageInfo(str(gid), info.get("name", ""), "",
                                       kind="group", can_post=info.get("status") != "BLOCKED"))
         return pages
 
