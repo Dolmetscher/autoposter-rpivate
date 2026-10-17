@@ -150,6 +150,9 @@ class PostOut(BaseModel):
 class ProjectIn(BaseModel):
     name: str
     settings: dict = {}
+    # None — не менять привязку (PUT без поля сохраняет аккаунты проекта);
+    # пустой список — явно отвязать все аккаунты.
+    account_ids: list[int] | None = None
 
 
 class ScheduleIn(BaseModel):

@@ -12,7 +12,7 @@ from ..config import settings
 from ..integrations.base import AdapterError, PublishContent
 from ..integrations.registry import get_adapter
 from ..models import (MediaFile, Post, PostAttachment, PostTarget, PostText,
-                      PublicationLog, Schedule, SocialAccount, SocialPage, User)
+                      PublicationLog, Schedule, SocialAccount, SocialPage, User, Project)
 from ..schemas import next_schedule_slot
 from ..util import utcnow
 
@@ -41,6 +41,27 @@ async def create_post(
     media_ids = media_ids or []
     document_ids = document_ids or []
     page_ids = page_ids or []
+
+    # Пост с project_id публикуется и на страницы аккаунтов проекта.
+    # Жадная загрузка: обращение к lazy-relationship в async-сессии
+    # вне flush роняет запрос с MissingGreenlet.
+    if project_id is not None:
+        project = (await s.execute(
+            select(Project)
+            .options(selectinload(Project.accounts).selectinload(SocialAccount.pages))
+            .where(Project.id == project_id, Project.user_id == user.id)
+        )).scalar_one_or_none()
+        if project is None:
+            raise ValueError(f"Project with id {project_id} not found")
+        # Страницы аккаунтов проекта (только те, куда можно публиковать)
+        project_page_ids = {
+            page.id
+            for account in project.accounts
+            for page in account.pages
+            if page.can_post
+        }
+        # Объединяем с явно выбранными страницами
+        page_ids = list({*page_ids, *project_page_ids})
 
     post = Post(
         user_id=user.id,

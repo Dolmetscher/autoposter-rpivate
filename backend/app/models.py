@@ -1,11 +1,18 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Table, Column
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
 from .services.crypto import EncryptedJSON
 
+
+project_accounts = Table(
+    'project_accounts',
+    Base.metadata,
+    Column('project_id', Integer, ForeignKey('projects.id'), primary_key=True),
+    Column('social_account_id', Integer, ForeignKey('social_accounts.id'), primary_key=True)
+)
 
 class User(Base):
     __tablename__ = "users"
@@ -70,6 +77,8 @@ class SocialAccount(Base):
 
     user: Mapped["User"] = relationship(back_populates="accounts")
     pages: Mapped[list["SocialPage"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    projects: Mapped[list["Project"]] = relationship(
+        secondary=project_accounts, back_populates="accounts")
 
 
 class SocialPage(Base):
@@ -98,6 +107,9 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(255))
     settings: Mapped[dict] = mapped_column(JSON, default=dict)  # пул страниц/текстов для случайного контента
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    accounts: Mapped[list["SocialAccount"]] = relationship(
+        secondary=project_accounts, back_populates="projects")
 
 
 class Schedule(Base):
