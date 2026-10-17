@@ -108,3 +108,30 @@ async def test_fetch_pages_uppercase_fields(monkeypatch):
     names = [p.name for p in pages[1:]]
     assert names == ["Заглавная", "Обычная"]
     assert [p.can_post for p in pages[1:]] == [True, False]
+
+
+async def test_publish_attachment_wrapped_in_media(monkeypatch):
+    """mediatopic.post: attachment — JSON-объект {"media": [...]}, а не голый список
+    (иначе API отвечает error_code 100: Invalid parameter attachment value)."""
+    import json as _json
+
+    from app.integrations.base import PublishContent
+
+    captured = {}
+
+    async def call(self, method, creds, extra_params=None):
+        captured[method] = extra_params
+        return "123456"
+
+    monkeypatch.setattr(OKAdapter, "call", call)
+    page = _A()
+    page.account = _A({"access_token": "t", "application_key": "k", "session_secret_key": "s"})
+    page.social_page_id = "g1"
+    page.page_kind = "group"
+    outcome = await OKAdapter().publish(
+        page, PublishContent(text="Привет, ОК!"))
+
+    assert outcome.ok
+    att = _json.loads(captured["mediatopic.post"]["attachment"])
+    assert isinstance(att, dict) and set(att.keys()) == {"media"}
+    assert att["media"][0] == {"type": "text", "text": "Привет, ОК!"}

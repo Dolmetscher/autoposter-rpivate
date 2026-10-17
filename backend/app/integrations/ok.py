@@ -174,7 +174,7 @@ class OKAdapter(SocialAdapter):
         topic = await self.call("mediatopic.post", creds,
                                 {"type": "GROUP_THEME" if gid else "USER",
                                  **({"gid": gid} if gid else {}),
-                                 "attachment": json.dumps(attachments, ensure_ascii=False)})
+                                 "attachment": json.dumps({"media": attachments}, ensure_ascii=False)})
         topic_id = str(topic)
         url = f"https://ok.ru/{('group/' + gid) if gid else 'profile/' + str(page.social_page_id)}/{topic_id}"
         return PublishOutcome(True, external_id=topic_id, external_url=url)
