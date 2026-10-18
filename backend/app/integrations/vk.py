@@ -167,6 +167,14 @@ class VKAdapter(SocialAdapter):
         return PublishOutcome(True, external_id=f"story{sid}",
                               external_url=f"https://vk.com/story{group_id or ''}_{sid}")
 
+    async def _add_link(self, client: httpx.AsyncClient, token: str, owner_id: int, url: str) -> str:
+        """Add link via VK links.add and return attachment string."""
+        r = await client.post(f"{API}/links.add", data={
+            "access_token": token, "v": V, "owner_id": owner_id, "url": url
+        })
+        data = self._unwrap("links.add", r)
+        return f"link{data['owner_id']}_{data['post_id']}"
+
     @staticmethod
     def _unwrap(method: str, r: httpx.Response):
         data = r.json()
@@ -203,6 +211,13 @@ class VKAdapter(SocialAdapter):
                     attachments.append(await self._upload_video(client, token, group_id, media))
             for doc in content.documents:
                 attachments.append(await self._upload_doc(client, token, group_id, doc))
+
+            link = st.get("link", "")
+            if link:
+                try:
+                    attachments.append(await self._add_link(client, token, owner, link))
+                except AdapterError as e:
+                    raise AdapterError(f"VK: ссылка не была добавлена: {e}")
 
             if not content.text and not attachments:
                 raise AdapterError("VK: пустой пост (нет текста и вложений)")
