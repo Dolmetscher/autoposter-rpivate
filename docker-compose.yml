@@ -10,7 +10,7 @@ services:
       PORT: 8000            # внутренний порт; наружу торчит только nginx
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
-      # Настройки прокси Webshare для обхода блокировок Meta и Twitter:
+      # Настройки прокси для обхода блокировок Meta и Twitter:
       HTTP_PROXY: "http://dmyD5d:R6Xu5s@168.81.66.247:8000"
       HTTPS_PROXY: "http://dmyD5d:R6Xu5s@168.81.66.247:8000"
       NO_PROXY: "localhost,127.0.0.1"
