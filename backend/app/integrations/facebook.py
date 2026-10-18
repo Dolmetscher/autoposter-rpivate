@@ -2,11 +2,13 @@
 Фото/видео передаются публичной ссылкой (см. PUBLIC_BASE_URL / S3)."""
 from __future__ import annotations
 
+import logging
 import httpx
 
 from ..config import settings
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
 
+logger = logging.getLogger(__name__)
 GRAPH = "https://graph.facebook.com/v21.0"
 
 
@@ -17,33 +19,72 @@ class FacebookAdapter(SocialAdapter):
 
     def connect_requires(self) -> list[dict]:
         return [{"name": "access_token",
-                 "label": "Page Access Token (developers.facebook.com)", "required": True}]
+                 "label": "Page Access Token или User Token (developers.facebook.com)", "required": True}]
+
+    async def _resolve_page_token(self, pid: str, user_token: str) -> str:
+        """Если у страницы нет сохраненного индивидуального токена, достаем его на лету по user-токену."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(f"{GRAPH}/{pid}",
+                                 params={"fields": "access_token", "access_token": user_token})
+            data = r.json()
+            if "access_token" in data:
+                return data["access_token"]
+        return user_token
 
     async def fetch_pages(self, account, extra: dict | None = None) -> list[PageInfo]:
         token = account.credentials.get("access_token")
         if not token:
             raise AdapterError("FB: не указан access_token")
+            
         async with httpx.AsyncClient(timeout=30) as client:
+            # Сначала проверяем: вдруг передан User Token и нужно запросить список страниц me/accounts
             r = await client.get(f"{GRAPH}/me/accounts",
-                                 params={"fields": "name,picture", "access_token": token})
-        data = r.json()
+                                 params={"fields": "name,picture,access_token", "access_token": token})
+            data = r.json()
+
+            # Если вернулась ошибка 100 — значит, пользователь вставил прямой Page Access Token конкретной страницы
+            if "error" in data and data["error"].get("code") == 100:
+                r_me = await client.get(f"{GRAPH}/me",
+                                        params={"fields": "name,picture", "access_token": token})
+                me_data = r_me.json()
+                if "error" in me_data:
+                    raise AdapterError(f"FB: {me_data['error'].get('message')}")
+                return [PageInfo(me_data["id"], me_data.get("name", ""),
+                                 (me_data.get("picture", {}).get("data") or {}).get("url", ""),
+                                 kind="page")]
+
         if "error" in data:
             raise AdapterError(f"FB: {data['error'].get('message')}")
-        pages = [PageInfo(p["id"], p.get("name", ""),
-                          (p.get("picture", {}).get("data") or {}).get("url", ""),
-                          kind="page")
-                 for p in data.get("data", [])]
+            
+        pages = []
+        for p in data.get("data", []):
+            # Сохраняем токен страницы, если он есть
+            page_token = p.get("access_token") or token
+            pages.append(PageInfo(p["id"], p.get("name", ""),
+                                  (p.get("picture", {}).get("data") or {}).get("url", ""),
+                                  kind="page"))
+            # Если база данных поддерживает credentials у страницы — обновляем токен страницы
+            if hasattr(account, "credentials") and page_token:
+                account.credentials[f"token_{p['id']}"] = page_token
+
         if not pages:
             raise AdapterError("FB: не найдено страниц (нужен токен страницы или "
                                "user-токен с правом manage_pages)")
         return pages
 
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
-        token = page.account.credentials.get("access_token")
+        pid = page.social_page_id
+        user_token = page.account.credentials.get("access_token")
+        
+        # Получаем правильный Page Access Token: либо сохраненный индивидуальный, либо достаем через API
+        token = page.account.credentials.get(f"token_{pid}")
+        if not token or token == user_token:
+            token = await self._resolve_page_token(pid, user_token)
+
         st = content.settings or {}
         if st.get("publish_as_story"):
             raise AdapterError("FB: истории через API не поддерживаются в этой версии")
-        pid = page.social_page_id
+            
         photos = [m for m in content.media if m.type == "photo"]
         videos = [m for m in content.media if m.type == "video"]
 
@@ -68,15 +109,25 @@ class FacebookAdapter(SocialAdapter):
                 r = await client.post(f"{GRAPH}/{pid}/feed", data={
                     "message": content.text,
                     "access_token": token})
-        data = r.json()
+
+        try:
+            data = r.json()
+        except Exception:
+            data = {"error": {"message": r.text}}
+
         if "error" in data:
-            raise AdapterError(f"FB: {data['error'].get('message')}")
+            err_msg = data['error'].get('message')
+            logger.error(f"FB publish failed [{r.status_code}] on page {pid}: {data}")
+            raise AdapterError(f"FB: {err_msg}")
+
         ext = data.get("post_id") or data.get("id", "")
         return PublishOutcome(True, external_id=ext,
                               external_url=f"https://www.facebook.com/{ext}" if ext else "")
 
     async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
-        token = page.account.credentials.get("access_token")
+        pid = page.social_page_id
+        user_token = page.account.credentials.get("access_token")
+        token = page.account.credentials.get(f"token_{pid}") or user_token
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.delete(f"{GRAPH}/{external_id}",
                                     params={"access_token": token})
