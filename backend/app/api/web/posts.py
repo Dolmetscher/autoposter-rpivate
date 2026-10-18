@@ -129,7 +129,7 @@ async def create_post(payload: PostIn, request: Request,
         payload.status = "draft"
         payload.publication_when_type = 1
     try:
-        pub_date = parse_publication_date(payload.publication_date) if payload.publication_date else None
+        pub_date = parse_publication_date(payload.publication_date, tz_name=user.timezone) if payload.publication_date else None
         if payload.publication_when_type == 2 and not pub_date:
             raise HTTPException(400, "Укажите дату публикации")
         from ...services import limits
@@ -184,7 +184,7 @@ async def update_post(post_id: int, payload: PostIn, request: Request,
     keep_targets = [t for t in post.targets if t.status in ("published", "deleted")]
 
     try:
-        pub_date = parse_publication_date(payload.publication_date) if payload.publication_date else None
+        pub_date = parse_publication_date(payload.publication_date, tz_name=user.timezone) if payload.publication_date else None
         post.publication_when_type = payload.publication_when_type
         post.settings = payload.settings
         post.project_id = payload.project_id

@@ -165,7 +165,7 @@ async def create_post(payload: PublicPostIn, user: User = Depends(get_token_user
     media_ids, doc_ids, settings = _parse_attachments(payload.attachments)
     page_ids = payload.selected_pages_ids
     when_type = payload.publication_when_type
-    pub_date = parse_publication_date(payload.publication_date) if payload.publication_date else None
+    pub_date = parse_publication_date(payload.publication_date, tz_name=user.timezone) if payload.publication_date else None
 
     if when_type == 3 and payload.schedules_ids:
         # ближайший слот расписания

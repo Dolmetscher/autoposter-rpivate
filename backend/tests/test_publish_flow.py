@@ -36,13 +36,19 @@ async def test_empty_post_rejected(client, auth_headers, mock_pages):
 
 
 async def test_scheduled_post_and_tick(client, auth_headers, mock_pages):
+    from zoneinfo import ZoneInfo
+
     from sqlalchemy import select
 
     from app.db import SessionFactory
     from app.models import Post
     from app.scheduler import tick_once
 
-    when = (utcnow() + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
+    # API трактует publication_date как локальное время пользователя (Europe/Moscow),
+    # поэтому строка должна быть московским временем на 5 минут вперёд
+    when = (utcnow().replace(tzinfo=ZoneInfo("UTC"))
+            .astimezone(ZoneInfo("Europe/Moscow")) + timedelta(minutes=5)
+            ).strftime("%Y-%m-%dT%H:%M:%S")
     r = await client.post("/api/web/posts", headers=auth_headers, json={
         "texts": [{"text": "Отложенный пост"}],
         "page_ids": mock_pages[:1],

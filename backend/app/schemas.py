@@ -183,19 +183,31 @@ class ApiTokenIn(BaseModel):
     name: str = "API-токен"
 
 
-def parse_publication_date(value: str | None) -> datetime | None:
-    """Понимает ISO, 'дд.мм.гггг' и 'дд.мм.гггг ЧЧ:ММ'."""
+def parse_publication_date(value: str | None, tz_name: str | None = None) -> datetime | None:
+    """Понимает ISO, 'дд.мм.гггг' и 'дд.мм.гггг ЧЧ:ММ'.
+
+    Если передан tz_name, значение интерпретируется как локальное время в этой
+    таймзоне и возвращается как naive-UTC (чтобы планировщик сравнивал с utcnow()).
+    """
     if not value:
         return None
     value = value.strip()
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S",
                 "%Y-%m-%d %H:%M", "%Y-%m-%d", "%d.%m.%Y %H:%M", "%d.%m.%Y"):
         try:
-            return datetime.strptime(value, fmt)
+            dt = datetime.strptime(value, fmt)
+            if tz_name:
+                from zoneinfo import ZoneInfo
+                dt = dt.replace(tzinfo=ZoneInfo(tz_name)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+            return dt
         except ValueError:
             continue
     try:
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
+        if tz_name and dt.tzinfo is None:
+            from zoneinfo import ZoneInfo
+            dt = dt.replace(tzinfo=ZoneInfo(tz_name)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        return dt
     except ValueError:
         raise ValueError(f"Не удалось разобрать дату: {value}")
 
