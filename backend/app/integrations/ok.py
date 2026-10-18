@@ -29,8 +29,10 @@ class OKAdapter(SocialAdapter):
         sig_src = "".join(f"{k}={params[k]}" for k in sorted(params)) + secret
         params.update({"sig": hashlib.md5(sig_src.encode()).hexdigest(),
                        "access_token": token})
+        
+        # Исправление: отправляем через POST data=params, чтобы избежать 400 Bad Request из-за длины URL
         async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.get("https://api.ok.ru/fb.do", params=params)
+            r = await client.post("https://api.ok.ru/fb.do", data=params)
         try:
             data = r.json()
         except ValueError as e:
@@ -82,12 +84,9 @@ class OKAdapter(SocialAdapter):
         raw_groups = groups.get("groups", []) if isinstance(groups, dict) else []
         ids = [g["groupId"] for g in raw_groups or [] if isinstance(g, dict) and g.get("groupId")]
         if ids:
-            # только валидные для GroupBeanFields поля: запрос аватарок
-            # (picAvatar и т.п.) даёт ошибку "Invalid parameter fields value"
+            # Запрашиваем только name и status
             infos = await self.call("group.getInfo", creds,
                                     {"uids": ",".join(ids), "fields": "name,status"})
-            # нормализуем к списку групп: API отдаёт массив, словарь id → группа
-            # или единичный объект группы (при одном uid)
             if isinstance(infos, list):
                 groups_list = [g for g in infos if isinstance(g, dict)]
             elif isinstance(infos, dict):
@@ -106,7 +105,6 @@ class OKAdapter(SocialAdapter):
             if by_id:
                 infos_for = [by_id.get(str(gid), {}) for gid in ids]
             else:
-                # id в ответе нет — маппим по порядку запроса
                 infos_for = (groups_list + [{}] * len(ids))[:len(ids)]
             for gid, info in zip(ids, infos_for):
                 name = info.get("name") or info.get("NAME") or ""
@@ -171,6 +169,8 @@ class OKAdapter(SocialAdapter):
 
         if not attachments:
             raise AdapterError("OK: пустой пост")
+        
+        # Исправление: mediatopic.post теперь тоже летит через POST
         topic = await self.call("mediatopic.post", creds,
                                 {"type": "GROUP_THEME" if gid else "USER",
                                  **({"gid": gid} if gid else {}),
