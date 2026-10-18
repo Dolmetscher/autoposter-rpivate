@@ -40,7 +40,9 @@ export default function PostEditor({ sources, accounts }: Props) {
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState<number | ''>('')
-  const [settings, setSettings] = useState<Record<string, unknown>>({})
+      const [settings, setSettings] = useState<Record<string, unknown>>({})
+      const [link, setLink] = useState('')
+      const [linkPreview, setLinkPreview] = useState(true)
   const [busy, setBusy] = useState(false)
   const [busyT, setBusyT] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -209,7 +211,11 @@ export default function PostEditor({ sources, accounts }: Props) {
         media_ids: media.map((m) => m.id),
         document_ids: docs.map((d) => d.id),
         page_ids: pageIds,
-        settings,
+        settings: {
+          ...settings,
+          link,
+          link_preview: linkPreview,
+        },
         publication_when_type: whenType,
         publication_date: whenType === 2 && date ? `${date}T${time}:00` : null,
         schedule_id: whenType === 3 ? scheduleId : null,
@@ -318,6 +324,20 @@ export default function PostEditor({ sources, accounts }: Props) {
                 if (s) setPerSource((p) => [...p, { source_id: s.id, text: '' }])
               }}>＋ Добавить</button>
             </details>
+          </div>
+
+          <div className="panel">
+            <h3 style={{ marginTop: 0 }}>Ссылка на материал</h3>
+            <input type="url"
+                   placeholder="https://zen.yandex.ru/... или другая статья"
+                   value={link}
+                   onChange={(e) => setLink(e.target.value)} />
+            <label className="check" style={{ marginTop: 10 }}>
+              <input type="checkbox"
+                     checked={linkPreview}
+                     onChange={(e) => setLinkPreview(e.target.checked)} />
+              Загружать превью ссылки (Open Graph: заголовок, картинка, описание)
+            </label>
           </div>
 
           <div className="panel">

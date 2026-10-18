@@ -104,7 +104,12 @@ class TelegramAdapter(SocialAdapter):
             raise AdapterError("Telegram: истории доступны только для аккаунтов (подключите через Telethon)")
         chat = page.social_page_id
         base = f"https://api.telegram.org/bot{token}"
+        settings = content.settings or {}
+        link = settings.get('link', '')
+        link_preview = settings.get('link_preview', True)
         caption = (content.text or "")[:1024]
+        if link:
+          caption = (caption + '\n' + link).strip()[:1024]
         items = [( _named(await read_media_bytes(m), m.name), m.type) for m in content.media]
         items += [(_named(await read_media_bytes(d), d.name), "document") for d in content.documents]
 
@@ -120,7 +125,8 @@ class TelegramAdapter(SocialAdapter):
                     else:
                         method, field = "sendDocument", "document"
                     r = await client.post(f"{base}/{method}",
-                                          data={"chat_id": chat, "caption": caption},
+                                          data={"chat_id": chat, "caption": caption,
+                                                "disable_web_page_preview": not link_preview},
                                           files={field: (bio.name, bio)})
                     message_id = self._tg_ok(method, r)["message_id"]
                 else:
@@ -143,6 +149,7 @@ class TelegramAdapter(SocialAdapter):
                     raise AdapterError("Telegram: пустой пост")
                 r = await client.post(f"{base}/sendMessage", json={
                     "chat_id": chat, "text": content.text,
+                    "disable_web_page_preview": not link_preview,
                 })
                 message_id = self._tg_ok("sendMessage", r)["message_id"]
             if st.get("pin_post") and message_id:
@@ -176,13 +183,19 @@ class TelegramAdapter(SocialAdapter):
                         raise AdapterError("Telegram истории: нужен файл")
                     bio, ftype = files[0]
                     return _send_story(c, entity, bio, ftype, content.text or ""), None
+                settings = content.settings or {}
+                link = settings.get('link', '')
+                link_preview = settings.get('link_preview', True)
+                text_to_send = content.text or ""
+                if link:
+                    text_to_send = (text_to_send + '\n' + link).strip()
                 msg_id = None
                 if files:
                     res = c.send_file(entity, [bio for bio, _ in files],
-                                      caption=content.text or None, file_caption=False)
+                                      caption=text_to_send or None, file_caption=False)
                     msg_id = getattr(res, "id", None) or res[0].id if isinstance(res, list) else res.id
-                elif content.text:
-                    msg = c.send_message(entity, content.text)
+                elif text_to_send:
+                    msg = c.send_message(entity, text_to_send, link_preview=link_preview)
                     msg_id = msg.id
                 else:
                     raise AdapterError("Telegram: пустой пост")
