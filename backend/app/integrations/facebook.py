@@ -1,12 +1,12 @@
 """Facebook: посты на страницы через Graph API (Page access token).
-Фото/видео передаются публичной ссылкой (см. PUBLIC_BASE_URL / S3)."""
+Фото/видео загружаются напрямую байтами (multipart), не требуя публичных ссылок."""
 from __future__ import annotations
 
 import logging
 import httpx
 
 from ..config import settings
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
+from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
 
 logger = logging.getLogger(__name__)
 GRAPH = "https://graph.facebook.com/v21.0"
@@ -37,12 +37,10 @@ class FacebookAdapter(SocialAdapter):
             raise AdapterError("FB: не указан access_token")
             
         async with httpx.AsyncClient(timeout=30) as client:
-            # Сначала проверяем: вдруг передан User Token и нужно запросить список страниц me/accounts
             r = await client.get(f"{GRAPH}/me/accounts",
                                  params={"fields": "name,picture,access_token", "access_token": token})
             data = r.json()
 
-            # Если вернулась ошибка 100 — значит, пользователь вставил прямой Page Access Token конкретной страницы
             if "error" in data and data["error"].get("code") == 100:
                 r_me = await client.get(f"{GRAPH}/me",
                                         params={"fields": "name,picture", "access_token": token})
@@ -58,12 +56,10 @@ class FacebookAdapter(SocialAdapter):
             
         pages = []
         for p in data.get("data", []):
-            # Сохраняем токен страницы, если он есть
             page_token = p.get("access_token") or token
             pages.append(PageInfo(p["id"], p.get("name", ""),
                                   (p.get("picture", {}).get("data") or {}).get("url", ""),
                                   kind="page"))
-            # Если база данных поддерживает credentials у страницы — обновляем токен страницы
             if hasattr(account, "credentials") and page_token:
                 account.credentials[f"token_{p['id']}"] = page_token
 
@@ -76,7 +72,6 @@ class FacebookAdapter(SocialAdapter):
         pid = page.social_page_id
         user_token = page.account.credentials.get("access_token")
         
-        # Получаем правильный Page Access Token: либо сохраненный индивидуальный, либо достаем через API
         token = page.account.credentials.get(f"token_{pid}")
         if not token or token == user_token:
             token = await self._resolve_page_token(pid, user_token)
@@ -92,17 +87,30 @@ class FacebookAdapter(SocialAdapter):
             if videos:
                 if len(videos) > 1:
                     raise AdapterError("FB: одно видео на пост")
-                r = await client.post(f"{GRAPH}/{pid}/videos", data={
-                    "file_url": content.public_url(videos[0].file_path),
-                    "description": content.text or "",
-                    "access_token": token})
+                vid_bytes = await read_media_bytes(videos[0])
+                vid_name = getattr(videos[0], "name", "video.mp4") or "video.mp4"
+                r = await client.post(
+                    f"{GRAPH}/{pid}/videos",
+                    data={
+                        "description": content.text or "",
+                        "access_token": token,
+                    },
+                    files={"source": (vid_name, vid_bytes)}
+                )
             elif photos:
                 if len(photos) > 1:
                     raise AdapterError("FB: не более одного фото на пост в этой версии")
-                r = await client.post(f"{GRAPH}/{pid}/photos", data={
-                    "url": content.public_url(photos[0].file_path),
-                    "caption": (content.text or "")[:2200],
-                    "access_token": token})
+                # ИСПРАВЛЕНИЕ: читаем файл локально и отправляем сами байты картинки в Facebook напрямую
+                img_bytes = await read_media_bytes(photos[0])
+                img_name = getattr(photos[0], "name", "photo.jpg") or "photo.jpg"
+                r = await client.post(
+                    f"{GRAPH}/{pid}/photos",
+                    data={
+                        "caption": (content.text or "")[:2200],
+                        "access_token": token,
+                    },
+                    files={"source": (img_name, img_bytes)}
+                )
             else:
                 if not content.text:
                     raise AdapterError("FB: пустой пост")
