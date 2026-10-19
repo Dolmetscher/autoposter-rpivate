@@ -33,14 +33,13 @@ class ThreadsAdapter(SocialAdapter):
             raise AdapterError("Threads: нужны access_token и threads_user_id")
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.get(f"{API}/{uid}",
-                                 params={"fields": "username,threads_profile_picture",
+                                 params={"fields": "username,threads_profile_picture_url",
                                          "access_token": token})
         data = r.json()
         if "error" in data:
             raise AdapterError(f"Threads: {data['error'].get('message')}")
         return [PageInfo(str(uid), f"@{data.get('username', uid)}",
-                         (data.get("threads_profile_picture") or {}).get("url", ""),
-                         kind="user")]
+                 data.get("threads_profile_picture_url", ""), kind="user")]
 
     async def _container(self, client: httpx.AsyncClient, token: str, uid: str,
                          params: dict) -> str:
