@@ -63,6 +63,8 @@ class InstagramAdapter(SocialAdapter):
         st = content.settings or {}
         photos = [m for m in content.media if m.type == "photo"]
         videos = [m for m in content.media if m.type == "video"]
+        # Лимит подписи Instagram — 2200 символов, лишнее приведёт к ошибке API.
+        caption = (content.text or "")[:2200]
 
         async with httpx.AsyncClient(timeout=120) as client:
             creation_id = None
@@ -84,11 +86,11 @@ class InstagramAdapter(SocialAdapter):
                         {"image_url": content.public_url(p.file_path), "is_carousel_item": "true"}))
                 creation_id = await self._create_container(client, token, ig_id, {
                     "media_type": "CAROUSEL", "children": ",".join(children),
-                    "caption": content.text or ""})
+                    "caption": caption})
             elif videos:
                 media_type = "REELS" if st.get("publish_as_reel") else "VIDEO"
                 params = {"media_type": media_type, "video_url": content.public_url(videos[0].file_path),
-                          "caption": content.text or ""}
+                          "caption": caption}
                 creation_id = await self._create_container(client, token, ig_id, params)
                 # контейнер видео нужно дождаться
                 for _ in range(24):
@@ -99,12 +101,14 @@ class InstagramAdapter(SocialAdapter):
                     if code == "FINISHED":
                         break
                     if code == "ERROR":
-                        raise AdapterError(f"Instagram: ошибка обработки видео")
+                        raise AdapterError("Instagram: ошибка обработки видео")
                     await asyncio.sleep(5)
+                else:
+                    raise AdapterError("Instagram: видео не обработалось за 2 минуты")
             elif photos:
                 creation_id = await self._create_container(client, token, ig_id, {
                     "image_url": content.public_url(photos[0].file_path),
-                    "caption": content.text or ""})
+                    "caption": caption})
             else:
                 if not content.text:
                     raise AdapterError("Instagram: пустой пост")

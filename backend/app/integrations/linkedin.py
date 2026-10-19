@@ -50,7 +50,8 @@ class LinkedInAdapter(SocialAdapter):
         author = f"urn:li:person:{page.social_page_id}"
         body = {
             "author": author,
-            "commentary": content.text,
+            # Лимит текста поста LinkedIn — 3000 символов.
+            "commentary": (content.text or "")[:3000],
             "visibility": "PUBLIC",
             "distribution": {
                 "feedDistribution": "MAIN_FEED",
@@ -65,7 +66,8 @@ class LinkedInAdapter(SocialAdapter):
                                   json=body)
         if r.status_code >= 300:
             raise AdapterError(f"LinkedIn: {r.status_code} {r.text[:200]}")
-        post_urn = r.headers.get("x-restli-id", "") or r.headers.get("X-RestLi-Id", "")
+        # Заголовки httpx регистронезависимы — достаточно одного варианта.
+        post_urn = r.headers.get("x-restli-id", "")
         ext = post_urn.split(":")[-1] if post_urn else ""
         activity = post_urn or f"urn:li:activity:{ext}"
         return PublishOutcome(True, external_id=post_urn,

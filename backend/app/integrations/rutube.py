@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import httpx
 
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes
+from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem
 
 API = "https://api.rutube.ru"
 
@@ -44,7 +44,11 @@ class RutubeAdapter(SocialAdapter):
         if len(videos) > 1:
             raise AdapterError("Рутуб: одно видео на публикацию")
         text = content.text or ""
-        title = (videos[0].title or text.splitlines()[0] if text else videos[0].name)[:100]
+        # Заголовок видео приоритетнее строки поста; если его нет — берём первую
+        # строку текста, иначе имя файла.
+        title = (videos[0].title
+                 or (text.splitlines()[0] if text else "")
+                 or videos[0].name)[:100]
 
         # грузим видео в хранилище-URL (Рутуб скачивает файл сам)
         video_url = content.public_url(videos[0].file_path)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import httpx
 
-from ..config import settings
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
 
 API = "https://open.tiktokapis.com/v2"

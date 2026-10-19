@@ -44,12 +44,15 @@ class PinterestAdapter(SocialAdapter):
         videos = [m for m in content.media if m.type == "video"]
         if not photos and not videos:
             raise AdapterError("Pinterest: пин требует фото или видео")
-        media_source = ({"source_type": "video_url",
-                         "cover_image_url": "",
-                         "media_url": content.public_url(videos[0].file_path)}
-                        if videos else
-                        {"source_type": "image_url",
-                         "url": content.public_url(photos[0].file_path)})
+        if videos:
+            # Для видео Pinterest обязательно требует обложку (cover_image_url).
+            cover = videos[0].file_thumbnail_path or videos[0].file_path
+            media_source = {"source_type": "video_url",
+                            "cover_image_url": content.public_url(cover),
+                            "media_url": content.public_url(videos[0].file_path)}
+        else:
+            media_source = {"source_type": "image_url",
+                            "url": content.public_url(photos[0].file_path)}
         text = content.text or ""
         title = text.splitlines()[0][:100] if text else "Пин"
         body = {

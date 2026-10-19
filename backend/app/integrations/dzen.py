@@ -33,8 +33,8 @@ class DzenAdapter(SocialAdapter):
             for ch in (data.get("channels") or []):
                 pages.append(PageInfo(str(ch.get("id", "")), ch.get("title", "Канал Дзен"),
                                       ch.get("image", "") or "", kind="channel"))
-        except ValueError:
-            raise AdapterError("Дзен: неожиданный ответ (экспериментальная интеграция)")
+        except ValueError as e:
+            raise AdapterError("Дзен: неожиданный ответ (экспериментальная интеграция)") from e
         if not pages:
             raise AdapterError("Дзен: каналы не найдены")
         return pages

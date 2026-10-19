@@ -474,7 +474,6 @@ export default function PostEditor({ sources, accounts }: Props) {
               <label className="check"><input type="checkbox" checked={bool('share_clips_to_feed')} onChange={(e) => set('share_clips_to_feed', e.target.checked)} /> ВК: дублировать клипы в ленту</label>
               <label className="check"><input type="checkbox" checked={bool('publish_as_shorts')} onChange={(e) => set('publish_as_shorts', e.target.checked)} /> YouTube: как Shorts</label>
               <label className="check"><input type="checkbox" checked={bool('publish_as_reel')} onChange={(e) => set('publish_as_reel', e.target.checked)} /> Instagram: как Reels</label>
-              <label className="check"><input type="checkbox" checked={bool('publish_as_carousel')} onChange={(e) => set('publish_as_carousel', e.target.checked)} /> Как карусель (несколько фото)</label>
               <label className="check"><input type="checkbox" checked={bool('approval_required')} onChange={(e) => set('approval', e.target.checked ? { required: true, status: 'pending' } : {})} /> Требовать согласование (админ одобрит перед публикацией)</label>
             </div>
             <div className="row" style={{ marginTop: 12 }}>

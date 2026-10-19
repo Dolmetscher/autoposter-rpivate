@@ -3,6 +3,8 @@ Application Passwords (Пользователи → Приложения в ад
 Фото/документы загружаются в медиатеку и прикрепляются к записи."""
 from __future__ import annotations
 
+import html
+
 import httpx
 
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
@@ -52,9 +54,10 @@ class WordPressAdapter(SocialAdapter):
             media_urls: dict[int, str] = {}
             for m in content.media + content.documents:
                 data = await read_media_bytes(m)
+                # Content-Disposition выставляет httpx сам для каждой части multipart —
+                # ручной общий заголовок ломает разбор загрузки на стороне WordPress.
                 r = await client.post(f"{api}/media",
-                                      files={"file": (m.name, data)},
-                                      headers={"Content-Disposition": f'attachment; filename="{m.name}"'})
+                                      files={"file": (m.name or "file", data)})
                 if r.status_code >= 300:
                     raise AdapterError(f"WP media: {r.text[:200]}")
                 uploaded = r.json()
@@ -67,7 +70,10 @@ class WordPressAdapter(SocialAdapter):
             lines = text.split("\n", 1)
             title = lines[0].strip()[:100] or "Пост"
             body = lines[1].strip() if len(lines) > 1 else ""
-            paragraphs = "".join(f"<p>{p.strip()}</p>" for p in body.split("\n\n") if p.strip())
+            # Текст поста экранируем — иначе спецсимволы ломают HTML.
+            paragraphs = "".join(
+                f"<p>{html.escape(p.strip()).replace(chr(10), '<br/>')}</p>"
+                for p in body.split("\n\n") if p.strip())
             payload = {
                 "title": title,
                 "content": paragraphs,

@@ -9,7 +9,8 @@ import json
 import httpx
 
 from ..config import settings
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
+from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
+                   media_filename, read_media_bytes)
 
 
 class OKAdapter(SocialAdapter):
@@ -135,8 +136,9 @@ class OKAdapter(SocialAdapter):
             files = {}
             for i, m in enumerate(photos):
                 bio = io.BytesIO(await read_media_bytes(m))
-                bio.name = m.name
-                files[f"pic{i + 1}"] = (m.name, bio)
+                fname = media_filename(m, "photo.jpg")
+                bio.name = fname
+                files[f"pic{i + 1}"] = (fname, bio)
             try:
                 async with httpx.AsyncClient(timeout=300) as client:
                     r = await client.post(upload_url, files=files)
@@ -146,26 +148,32 @@ class OKAdapter(SocialAdapter):
                     bio.close()
             photo_list = []
             for pid, pdata in (data.get("photos") or {}).items():
-                token = (pdata.get("token") or pid)
-                photo_list.append({"id": token})
+                # Значением может быть и токен-строка, и объект с полем token.
+                token = pdata.get("token") if isinstance(pdata, dict) else pdata
+                photo_list.append({"id": token or pid})
             if photo_list:
                 attachments.append({"type": "photo", "list": photo_list})
 
         videos = [m for m in content.media if m.type == "video"]
         if videos:
-            params = {"file_name": videos[0].name}
+            if len(videos) > 1:
+                raise AdapterError("OK: в один пост загружается только одно видео")
+            vname = media_filename(videos[0], "video.mp4")
+            params = {"file_name": vname}
             if gid:
                 params["gid"] = gid
             up = await self.call("video.getUploadUrl", creds, params)
+            # video.getUploadUrl отдаёт строку-ссылку, photosV2 — объект.
+            upload_url = up if isinstance(up, str) else (up or {}).get("upload_url")
+            if not upload_url:
+                raise AdapterError("OK: не удалось получить ссылку загрузки видео")
             bio = io.BytesIO(await read_media_bytes(videos[0]))
-            bio.name = videos[0].name
+            bio.name = vname
             async with httpx.AsyncClient(timeout=600) as client:
-                r = await client.post(up["upload_url"], files={"file": (videos[0].name, bio)})
+                r = await client.post(upload_url, files={"file": (vname, bio)})
             vid = r.json().get("video_id") or ""
             if vid:
                 attachments.append({"type": "video", "list": [{"id": vid}]})
-            if len(videos) > 1:
-                raise AdapterError("OK: в один пост загружается только одно видео")
 
         if not attachments:
             raise AdapterError("OK: пустой пост")

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate, Post, sourceColor, sourceName, STATUS_RU, SourceInfo } from '../lib/types'
 
@@ -10,6 +10,8 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
   const [total, setTotal] = useState(0)
   const [selected, setSelected] = useState<number[]>([])
   const [myRole, setMyRole] = useState('owner')
+
+  const location = useLocation()
 
   const load = async () => {
     const params = new URLSearchParams({ page: String(page) })
@@ -22,7 +24,7 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
   useEffect(() => {
     load().catch(() => {})
     api.get<{ role: string }>('/api/web/team/my-role').then((r) => setMyRole(r.role)).catch(() => {})
-  }, [page, filter])
+  }, [page, filter, location.pathname])
 
   const canApprove = myRole === 'owner' || myRole === 'admin'
 

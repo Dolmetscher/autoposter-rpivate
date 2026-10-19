@@ -162,6 +162,10 @@ async def publish_target(s: AsyncSession, post: Post, target: PostTarget) -> Non
     await s.flush()
     try:
         content = build_content(post, target.source_id)
+        if not adapter.handles_link:
+            # Сеть не умеет публиковать ссылку сама — дописываем её в текст,
+            # тогда превью (Open Graph) развернёт сама сеть.
+            content.text = content.text_with_link()
         outcome = await adapter.publish(page, content)
     except AdapterError as e:
         outcome = type("Outcome", (), {"ok": False, "external_id": "", "external_url": "",

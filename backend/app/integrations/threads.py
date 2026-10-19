@@ -77,13 +77,15 @@ class ThreadsAdapter(SocialAdapter):
             raise AdapterError("Threads: одно видео без других медиа на пост")
         if not content.text and not photos and not videos:
             raise AdapterError("Threads: пустой пост")
+        # Лимит текста поста Threads — 500 символов.
+        text = (content.text or "")[:500]
 
         async with httpx.AsyncClient(timeout=120) as client:
             if videos:
                 container = await self._container(client, token, uid, {
                     "media_type": "VIDEO",
                     "video_url": content.public_url(videos[0].file_path),
-                    "text": content.text or ""})
+                    "text": text})
                 await self._wait_ready(client, token, container)
             elif len(photos) > 1:
                 children = []
@@ -96,17 +98,17 @@ class ThreadsAdapter(SocialAdapter):
                     await self._wait_ready(client, token, cid)
                 container = await self._container(client, token, uid, {
                     "media_type": "CAROUSEL", "children": ",".join(children),
-                    "text": content.text or ""})
+                    "text": text})
                 await self._wait_ready(client, token, container)
             elif photos:
                 container = await self._container(client, token, uid, {
                     "media_type": "IMAGE",
                     "image_url": content.public_url(photos[0].file_path),
-                    "text": content.text or ""})
+                    "text": text})
                 await self._wait_ready(client, token, container)
             else:
                 container = await self._container(client, token, uid, {
-                    "media_type": "TEXT", "text": content.text})
+                    "media_type": "TEXT", "text": text})
 
             r = await client.post(f"{API}/{uid}/threads_publish",
                                   data={"creation_id": container, "access_token": token})

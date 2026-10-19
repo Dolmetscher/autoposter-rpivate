@@ -2,6 +2,8 @@
 Ключи: api.tumblr.com/console → consumer key/secret + OAuth token/secret."""
 from __future__ import annotations
 
+import httpx
+
 from ._oauth1 import OAuth1Client, oauth1_header
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
 
@@ -32,10 +34,12 @@ class TumblrAdapter(SocialAdapter):
     async def fetch_pages(self, account, extra: dict | None = None) -> list[PageInfo]:
         client = OAuth1Client(self._creds(account))
         r = await client.request("GET", f"{API}/user/info")
+        if r.status_code >= 300:
+            raise AdapterError(f"Tumblr user/info: {r.text[:200]}")
         data = r.json()
-        if r.status_code >= 300 or "response" not in data:
+        if "response" not in data:
             raise AdapterError(f"Tumblr user/info: "
-                               f"{data.get('meta', {}).get('msg', r.text[:200])}")
+                               f"{data.get('meta', {}).get('msg', 'неизвестная ошибка')}")
         blogs = data["response"].get("user", {}).get("blogs", [])
         return [PageInfo(b["name"], b.get("title") or b["name"],
                          (b.get("avatar") or [{}])[0].get("url", ""), kind="user")
@@ -59,9 +63,8 @@ class TumblrAdapter(SocialAdapter):
         if photos:
             # multipart: в подпись идут только oauth-параметры (RFC 5849)
             header = oauth1_header("POST", url, creds)
-            files = [(f"data[{i}]", (p.name, await read_media_bytes(p)))
+            files = [(f"data[{i}]", (p.name or "photo.jpg", await read_media_bytes(p)))
                      for i, p in enumerate(photos[:10])]
-            import httpx
             async with httpx.AsyncClient(timeout=300) as http:
                 r = await http.post(url, data={"type": "photo", "caption": text},
                                     files=files, headers={"Authorization": header})
@@ -69,10 +72,11 @@ class TumblrAdapter(SocialAdapter):
             client = OAuth1Client(creds, timeout=60)
             r = await client.request("POST", url,
                                      data={"type": "text", "body": text})
+        if r.status_code >= 300:
+            raise AdapterError(f"Tumblr post: {r.text[:200]}")
         data = r.json()
-        if r.status_code >= 300 or "response" not in data:
-            raise AdapterError(f"Tumblr post: "
-                               f"{data.get('meta', {}).get('msg', r.text[:200])}")
+        if "response" not in data:
+            raise AdapterError(f"Tumblr post: {data.get('meta', {}).get('msg', 'неизвестная ошибка')}")
         ext = str(data["response"].get("id", ""))
         return PublishOutcome(True, external_id=ext,
                               external_url=f"https://{blog}.tumblr.com/post/{ext}")

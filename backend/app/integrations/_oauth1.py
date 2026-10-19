@@ -65,8 +65,3 @@ class OAuth1Client:
             return await client.request(method, url, params=params, json=body,
                                         headers={"Authorization": header,
                                                  "Content-Type": "application/json"})
-
-
-def percent_encode_bytes(name: str) -> str:
-    """Имя файла для multipart — OAuth1-подпись multipart не требует, но кодировка полезна."""
-    return _enc(name)

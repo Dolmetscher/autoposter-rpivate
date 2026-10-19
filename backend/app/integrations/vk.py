@@ -6,7 +6,8 @@ import re
 
 import httpx
 
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes
+from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
+                   SourceItem, media_filename, read_media_bytes)
 
 API = "https://api.vk.com/method"
 V = "5.199"
@@ -16,6 +17,7 @@ class VKAdapter(SocialAdapter):
     source_id = 1
     name = "ВКонтакте"
     capabilities = ("post", "photo", "video", "story", "clip", "channel")
+    handles_link = True  # ссылка публикуется вложением links.add
 
     # ---------- служебные ----------
     async def call(self, method: str, token: str, **params):
@@ -103,8 +105,8 @@ class VKAdapter(SocialAdapter):
         r = await client.post(f"{API}/photos.getWallUploadServer", data=params)
         info = self._unwrap("photos.getWallUploadServer", r)
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
-        
-        up = await client.post(upload_url, files={"photo": (media.name, await read_media_bytes(media))})
+        up = await client.post(upload_url, files={"photo": (media_filename(media, "photo.jpg"),
+                                                           await read_media_bytes(media))})
         saved = await client.post(f"{API}/photos.saveWallPhoto", data={
             **params, **{k: str(v) for k, v in up.json().items()
                          if k in ("server", "photo", "hash")}})
@@ -114,7 +116,8 @@ class VKAdapter(SocialAdapter):
 
     async def _upload_video(self, client: httpx.AsyncClient, token: str, group_id: int | None,
                             media) -> str:  # noqa: ANN001
-        params = {"access_token": token, "v": V, "name": (media.title or media.name)[:100],
+        params = {"access_token": token, "v": V,
+                  "name": (media.title or media_filename(media, "video.mp4"))[:100],
                   "description": media.description or "", "wallpost": 0}
         if group_id:
             params["group_id"] = abs(group_id)
@@ -122,19 +125,20 @@ class VKAdapter(SocialAdapter):
         info = self._unwrap("video.save", r)
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
         await client.post(upload_url,
-                          files={"video_file": (media.name, await read_media_bytes(media))})
+                          files={"video_file": (media_filename(media, "video.mp4"),
+                                                await read_media_bytes(media))})
         return f"video{info['owner_id']}_{info['video_id']}"
 
     async def _upload_doc(self, client: httpx.AsyncClient, token: str, group_id: int | None,
                           media) -> str:  # noqa: ANN001
-        params = {"access_token": token, "v": V, "type": "doc", "title": media.name}
+        title = media_filename(media, "document")
+        params = {"access_token": token, "v": V, "type": "doc", "title": title}
         if group_id:
             params["group_id"] = abs(group_id)
         r = await client.post(f"{API}/docs.getWallUploadServer", data=params)
         info = self._unwrap("docs.getWallUploadServer", r)
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
-        
-        up = await client.post(upload_url, files={"file": (media.name, await read_media_bytes(media))})
+        up = await client.post(upload_url, files={"file": (title, await read_media_bytes(media))})
         saved = await client.post(f"{API}/docs.save", data={
             **params, **{k: str(v) for k, v in up.json().items()
                          if k in ("file", "title", "tags")}})
@@ -160,7 +164,8 @@ class VKAdapter(SocialAdapter):
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
         
         field = "photo" if media.type == "photo" else "video_file"
-        up = await client.post(upload_url, files={field: (media.name, await read_media_bytes(media))})
+        up = await client.post(upload_url, files={field: (media_filename(media, "media.jpg"),
+                                                           await read_media_bytes(media))})
         data = up.json()
         items = (data.get("response") or {}).get("items") or []
         if not items:
@@ -210,18 +215,20 @@ class VKAdapter(SocialAdapter):
             for doc in content.documents:
                 attachments.append(await self._upload_doc(client, token, group_id, doc))
 
-            # Ссылку в ВК просто добавляют в attachments напрямую, без вызова несуществующего API
-            link = st.get("link", "")
+            # Ссылку в ВК добавляем прямо в attachments: отдельного метода API
+            # для вложения-ссылки нет, а VK сам разворачивает из URL превью.
+            link = (st.get("link") or "").strip()
             if link:
-                attachments.append(link.strip())
+                attachments.append(link)
+            message = (content.text or "").strip()
 
-            if not content.text and not attachments:
+            if not message and not attachments:
                 raise AdapterError("VK: пустой пост (нет текста и вложений)")
 
             r = await client.post(f"{API}/wall.post", data={
                 "access_token": token, "v": V, "owner_id": owner,
                 "from_group": 1 if kind != "user" else 0,
-                "message": content.text or "",
+                "message": message[:4096],
                 "attachments": ",".join(attachments),
             })
             resp = self._unwrap("wall.post", r)
@@ -272,7 +279,7 @@ class VKAdapter(SocialAdapter):
         if "club" in source_ref or source_ref.strip().startswith("-"):
             owner = -owner
         resp = await self.call("wall.get", token, owner_id=owner, count=limit,
-                               filter="owner" if owner < 0 else "owner")
+                               filter="owner")
         items: list[SourceItem] = []
         for p in resp.get("items", []):
             media: list[dict] = []

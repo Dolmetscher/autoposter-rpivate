@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import datetime, timezone
 
 import httpx
 
 from .base import SourceItem
-
-_IMG_TYPES = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 
 
 def _tag(block: str, name: str) -> str:

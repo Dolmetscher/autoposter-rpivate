@@ -71,7 +71,8 @@ class YouTubeAdapter(SocialAdapter):
             raise AdapterError("YouTube: одно видео на пост")
 
         token = await self._token(page.account.credentials)
-        text = content.text or ""
+        # Лимит описания YouTube — 5000 символов, лишнее приведёт к ошибке API.
+        text = (content.text or "")[:5000]
         title = video.title or (text.splitlines()[0] if text else video.name)
         title = title[:100]
         # YouTube сам распознаёт Shorts (вертикальное видео до 3 минут);
@@ -100,8 +101,11 @@ class YouTubeAdapter(SocialAdapter):
                     json=metadata)
                 if init.status_code >= 300:
                     raise AdapterError(f"YouTube init: {init.text[:300]}")
+                location = init.headers.get("Location")
+                if not location:
+                    raise AdapterError("YouTube init: сервер не вернул ссылку загрузки")
                 with open(tmp, "rb") as f:
-                    upload = await client.put(init.headers["Location"], content=f)
+                    upload = await client.put(location, content=f)
         finally:
             Path(tmp).unlink(missing_ok=True)
         if upload.status_code >= 300:

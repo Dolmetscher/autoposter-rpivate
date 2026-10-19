@@ -8,7 +8,8 @@ import re
 
 import httpx
 
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes
+from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
+                   SourceItem, media_filename, read_media_bytes)
 
 
 def _named(data: bytes, name: str) -> io.BytesIO:
@@ -21,6 +22,7 @@ class TelegramAdapter(SocialAdapter):
     source_id = 9
     name = "Telegram"
     capabilities = ("post", "photo", "video", "document", "story", "channel", "chat")
+    handles_link = True  # ссылка идёт в подпись, превью отключается флагом
 
     # ---------- подключение ----------
     def connect_requires(self) -> list[dict]:
@@ -104,36 +106,40 @@ class TelegramAdapter(SocialAdapter):
             raise AdapterError("Telegram: истории доступны только для аккаунтов (подключите через Telethon)")
         chat = page.social_page_id
         base = f"https://api.telegram.org/bot{token}"
-        settings = content.settings or {}
-        link = settings.get('link', '')
-        link_preview = settings.get('link_preview', True)
-        caption = (content.text or "")[:1024]
+        link = (st.get('link') or '').strip()
+        link_preview = st.get('link_preview', True)
+        # Ссылка с превью уходит и в текст, и в подпись — иначе она теряется
+        # при отправке без медиа (sendMessage). Под неё резервируем место,
+        # чтобы лимит подписи (1024) не обрезал именно её.
+        text = (content.text or "").strip()
         if link:
-          caption = (caption + '\n' + link).strip()[:1024]
-        items = [( _named(await read_media_bytes(m), m.name), m.type) for m in content.media]
-        items += [(_named(await read_media_bytes(d), d.name), "document") for d in content.documents]
+            head = text[:max(1024 - len(link) - 1, 0)].rstrip()
+            full_text = f"{head}\n{link}" if head else link
+        else:
+            full_text = text
+        caption = full_text[:1024]
+        gallery = [(_named(await read_media_bytes(m), media_filename(m, "media")), m.type)
+                   for m in content.media]
+        docs = [(_named(await read_media_bytes(d), media_filename(d, "document")), "document")
+                for d in content.documents]
 
         async with httpx.AsyncClient(timeout=300) as client:
             message_id = None
-            if items:
-                if len(items) == 1:
-                    bio, mtype = items[0]
-                    if mtype == "photo":
-                        method, field = "sendPhoto", "photo"
-                    elif mtype == "video":
-                        method, field = "sendVideo", "video"
-                    else:
-                        method, field = "sendDocument", "document"
+            if gallery:
+                if len(gallery) == 1:
+                    bio, mtype = gallery[0]
+                    method = {"photo": "sendPhoto", "video": "sendVideo"}.get(mtype, "sendDocument")
+                    field = {"photo": "photo", "video": "video"}.get(mtype, "document")
                     r = await client.post(f"{base}/{method}",
                                           data={"chat_id": chat, "caption": caption,
                                                 "disable_web_page_preview": not link_preview},
                                           files={field: (bio.name, bio)})
                     message_id = self._tg_ok(method, r)["message_id"]
                 else:
+                    # Альбом Telegram поддерживает только фото и видео.
                     media_group = []
-                    for i, (bio, mtype) in enumerate(items):
-                        entry = {"type": mtype if mtype in ("photo", "video") else "document",
-                                 "media": f"attach://file{i}"}
+                    for i, (bio, mtype) in enumerate(gallery):
+                        entry = {"type": mtype, "media": f"attach://file{i}"}
                         if i == 0 and caption:
                             entry["caption"] = caption
                         media_group.append(entry)
@@ -141,14 +147,31 @@ class TelegramAdapter(SocialAdapter):
                                           data={"chat_id": chat,
                                                 "media": _json.dumps(media_group, ensure_ascii=False)},
                                           files={f"file{i}": (bio.name, bio)
-                                                 for i, (bio, _) in enumerate(items)})
+                                                 for i, (bio, _) in enumerate(gallery)})
                     res = self._tg_ok("sendMediaGroup", r)
                     message_id = res[0]["message_id"]
+                # Документы в альбом Telegram не пускает — шлём их отдельными сообщениями.
+                for bio, _ in docs:
+                    r = await client.post(f"{base}/sendDocument",
+                                          data={"chat_id": chat},
+                                          files={"document": (bio.name, bio)})
+                    self._tg_ok("sendDocument", r)
+            elif docs:
+                for i, (bio, _) in enumerate(docs):
+                    data = {"chat_id": chat}
+                    if i == 0:
+                        data["caption"] = caption
+                        data["disable_web_page_preview"] = not link_preview
+                    r = await client.post(f"{base}/sendDocument", data=data,
+                                          files={"document": (bio.name, bio)})
+                    res = self._tg_ok("sendDocument", r)
+                    if i == 0:
+                        message_id = res["message_id"]
             else:
-                if not content.text:
+                if not full_text:
                     raise AdapterError("Telegram: пустой пост")
                 r = await client.post(f"{base}/sendMessage", json={
-                    "chat_id": chat, "text": content.text,
+                    "chat_id": chat, "text": full_text,
                     "disable_web_page_preview": not link_preview,
                 })
                 message_id = self._tg_ok("sendMessage", r)["message_id"]
@@ -168,32 +191,39 @@ class TelegramAdapter(SocialAdapter):
         if not (api_id and api_hash and session):
             raise AdapterError("Telegram: аккаунт не настроен (api_id/api_hash/session)")
 
-        files = [(_named(await read_media_bytes(m), m.name), m.type) for m in content.media]
-        files += [(_named(await read_media_bytes(d), d.name), "document") for d in content.documents]
+        files = [(_named(await read_media_bytes(m), media_filename(m, "media")), m.type)
+                 for m in content.media]
+        files += [(_named(await read_media_bytes(d), media_filename(d, "document")), "document")
+                  for d in content.documents]
 
         def work():
             from telethon import TelegramClient
             from telethon.sessions import StringSession
 
             st = content.settings or {}
+            link = (st.get('link') or '').strip()
+            link_preview = st.get('link_preview', True)
+            text = (content.text or "").strip()
+            if link:
+                head = text[:max(1024 - len(link) - 1, 0)].rstrip()
+                text_to_send = f"{head}\n{link}" if head else link
+            else:
+                text_to_send = text
             with TelegramClient(StringSession(session), api_id, api_hash) as c:
                 entity = c.get_entity(int(page.social_page_id))
                 if st.get("publish_as_story"):
                     if not files:
                         raise AdapterError("Telegram истории: нужен файл")
                     bio, ftype = files[0]
-                    return _send_story(c, entity, bio, ftype, content.text or ""), None
-                settings = content.settings or {}
-                link = settings.get('link', '')
-                link_preview = settings.get('link_preview', True)
-                text_to_send = content.text or ""
-                if link:
-                    text_to_send = (text_to_send + '\n' + link).strip()
+                    return _send_story(c, entity, bio, ftype, text_to_send), None
                 msg_id = None
                 if files:
                     res = c.send_file(entity, [bio for bio, _ in files],
-                                      caption=text_to_send or None, file_caption=False)
-                    msg_id = getattr(res, "id", None) or res[0].id if isinstance(res, list) else res.id
+                                      caption=text_to_send or None)
+                    if isinstance(res, list):
+                        msg_id = res[0].id if res else None
+                    else:
+                        msg_id = getattr(res, "id", None)
                 elif text_to_send:
                     msg = c.send_message(entity, text_to_send, link_preview=link_preview)
                     msg_id = msg.id
@@ -234,11 +264,17 @@ class TelegramAdapter(SocialAdapter):
                                       json={"chat_id": chat, "message_ids": [mid]})
                 return bool(r.json().get("ok"))
         if mode == "account":
+            api_id = creds.get("api_id")
+            api_hash = creds.get("api_hash")
+            session = creds.get("session")
+            if not (api_id and api_hash and session):
+                raise AdapterError("Telegram: аккаунт не настроен (api_id/api_hash/session)")
+
             def work():
                 from telethon import TelegramClient
                 from telethon.sessions import StringSession
 
-                with TelegramClient(StringSession(session), int(creds["api_id"]), creds["api_hash"]) as c:
+                with TelegramClient(StringSession(session), int(api_id), api_hash) as c:
                     c.delete_messages(int(chat), [mid])
                 return True
             return await asyncio.to_thread(work)
@@ -254,7 +290,6 @@ class TelegramAdapter(SocialAdapter):
             r = await client.get(url)
             r.raise_for_status()
             html = r.text
-        blocks = re.findall(r'data-post="([^"]+)".*?(?=data-post="|</section>)', html, re.S)
         posts_html = re.split(r'<div class="tgme_widget_message_wrap', html)[1:]
         items: list[SourceItem] = []
         for block in posts_html[:limit]:
@@ -292,4 +327,7 @@ def _send_story(client, entity, bio: io.BytesIO, ftype: str, caption: str):  # n
     result = client(SendStoryRequest(
         peer=entity, media=media, random_id=int.from_bytes(os.urandom(8), "big"),
         privacy=[types.InputPrivacyValueAllowAllRequest()], message=caption or None))
-    return getattr(result, "id", 0)
+    # id=0 означает, что история не создана — возвращаем None, чтобы вызывающий
+    # не построил несуществующую ссылку.
+    story_id = getattr(result, "id", 0)
+    return story_id or None

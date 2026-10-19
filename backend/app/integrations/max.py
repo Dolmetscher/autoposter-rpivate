@@ -36,9 +36,12 @@ class MaxAdapter(SocialAdapter):
             raise AdapterError(f"Макс: {data.get('message', 'ошибка доступа')}")
         pages: list[PageInfo] = []
         for c in (data.get("chats") or []):
+            chat_id = c.get("chat_id")
+            if not chat_id:
+                continue
             ctype = c.get("type", "group")
             kind = "channel" if ctype == "channel" else ("chat" if ctype == "dialog" else "group")
-            pages.append(PageInfo(str(c.get("chat_id")), c.get("title") or "Чат",
+            pages.append(PageInfo(str(chat_id), c.get("title") or "Чат",
                                   kind=kind))
         if not pages:
             raise AdapterError("Макс: бота не добавили ни в один чат/канал "
@@ -49,11 +52,14 @@ class MaxAdapter(SocialAdapter):
         att_type = UPLOAD_TYPES.get(media.type, "file")
         r = await client.post(f"{API}/uploads", params={"type": att_type},
                               headers=self._headers(token))
-        data = r.json()
         if r.status_code >= 300:
-            raise AdapterError(f"Макс uploads: {data.get('message', 'ошибка')}")
+            raise AdapterError(f"Макс uploads: {r.text[:200]}")
+        data = r.json()
         upload_url = data.get("url")
-        await client.post(upload_url, files={"data": (media.name, await read_media_bytes(media))})
+        if not upload_url:
+            raise AdapterError("Макс uploads: сервер не вернул ссылку загрузки")
+        await client.post(upload_url, files={"data": (media.name or "file",
+                                                      await read_media_bytes(media))})
         return {"type": att_type, "payload": {"token": data.get("token")}}
 
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
@@ -74,9 +80,9 @@ class MaxAdapter(SocialAdapter):
                                   headers=self._headers(token),
                                   json={"text": content.text or "",
                                         "attachments": attachments})
-        data = r.json()
         if r.status_code >= 300:
-            raise AdapterError(f"Макс: {data.get('message', 'ошибка отправки')}")
+            raise AdapterError(f"Макс: {r.text[:200]}")
+        data = r.json()
         msg = data.get("message", {})
         body = (msg.get("body") or {})
         mid = body.get("mid", "")

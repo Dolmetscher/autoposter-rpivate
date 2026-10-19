@@ -10,7 +10,8 @@ from pathlib import Path
 
 from ..config import settings
 from ._oauth1 import OAuth1Client
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes, read_media_bytes_to_file
+from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
+                   media_filename, read_media_bytes, read_media_bytes_to_file)
 
 API2 = "https://api.twitter.com/2"
 UPLOAD = "https://upload.twitter.com/1.1/media/upload.json"
@@ -55,7 +56,8 @@ class TwitterAdapter(SocialAdapter):
         if media.type == "video":
             return await self._upload_video(client, media)
         data = await read_media_bytes(media)
-        r = await client.request("POST", UPLOAD, files={"media": (media.name, data)})
+        r = await client.request("POST", UPLOAD,
+                                 files={"media": (media_filename(media, "media"), data)})
         out = r.json()
         if "media_id_string" not in out:
             raise AdapterError(f"Twitter media/upload: {out.get('errors', out)}")
@@ -103,6 +105,9 @@ class TwitterAdapter(SocialAdapter):
                 if "processing_info" not in out:
                     break
                 info = out["processing_info"]
+            if info.get("state") in ("failed", "errored"):
+                raise AdapterError(f"Twitter: видео не обработано: "
+                                   f"{info.get('error', {}).get('message', 'ошибка обработки')}")
             return media_id
         finally:
             Path(tmp).unlink(missing_ok=True)
@@ -114,13 +119,17 @@ class TwitterAdapter(SocialAdapter):
             raise AdapterError("Twitter: историй (stories) нет — это пост в ленту")
         if not content.text and not content.media:
             raise AdapterError("Twitter: пустой пост")
+        # Проверяем до загрузки файлов: X принимает до 4 фото либо 1 видео.
+        videos = [m for m in content.media if m.type == "video"]
+        if len(content.media) > 4:
+            raise AdapterError("Twitter: не более 4 медиа на пост")
+        if videos and len(content.media) > 1:
+            raise AdapterError("Twitter: видео должно быть единственным медиа в посте")
 
         client = OAuth1Client(creds, timeout=300)
         media_ids: list[str] = []
         for m in content.media:
             media_ids.append(await self._upload_media(client, m))
-        if len(media_ids) > 4:
-            raise AdapterError("Twitter: не более 4 медиа на пост")
 
         body = {"text": content.text}
         if media_ids:

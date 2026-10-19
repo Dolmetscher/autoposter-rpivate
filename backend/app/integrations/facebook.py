@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
+
 import httpx
 
-from ..config import settings
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,9 @@ class FacebookAdapter(SocialAdapter):
                                  params={"fields": "name,picture,access_token", "access_token": token})
             data = r.json()
 
-            if "error" in data and data["error"].get("code") == 100:
+            if "error" in data and data["error"].get("code") in (100, 190, 200):
+                # 100 — «Unsupported get request», 190 — недействительный токен,
+                # 200 — нет прав manage_pages: во всех случаях пробуем личный профиль.
                 r_me = await client.get(f"{GRAPH}/me",
                                         params={"fields": "name,picture", "access_token": token})
                 me_data = r_me.json()
@@ -60,8 +62,11 @@ class FacebookAdapter(SocialAdapter):
             pages.append(PageInfo(p["id"], p.get("name", ""),
                                   (p.get("picture", {}).get("data") or {}).get("url", ""),
                                   kind="page"))
-            if hasattr(account, "credentials") and page_token:
-                account.credentials[f"token_{p['id']}"] = page_token
+            if page_token:
+                # Присваиваем новый словарь, а не мутируем на месте: колонка
+                # credentials — обычный JSON, и in-place изменение SQLAlchemy
+                # не отслеживает (токен не попал бы в БД).
+                account.credentials = {**account.credentials, f"token_{p['id']}": page_token}
 
         if not pages:
             raise AdapterError("FB: не найдено страниц (нужен токен страницы или "
@@ -71,7 +76,9 @@ class FacebookAdapter(SocialAdapter):
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
         pid = page.social_page_id
         user_token = page.account.credentials.get("access_token")
-        
+        if not user_token:
+            raise AdapterError("FB: у аккаунта нет access_token")
+
         token = page.account.credentials.get(f"token_{pid}")
         if not token or token == user_token:
             token = await self._resolve_page_token(pid, user_token)

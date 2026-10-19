@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-
-import httpx
-
-log = logging.getLogger("adapters")
 
 
 class AdapterError(Exception):
@@ -53,11 +48,36 @@ class PublishContent:
         from ..services import storage
         return storage.public_url(file_path)
 
+    def text_with_link(self) -> str:
+        """Текст поста вместе со ссылкой из настроек.
+
+        Для сетей, где нет отдельного вложения-ссылки (все, кроме VK и Telegram),
+        ссылка дописывается в текст — сама сеть развернёт из неё превью.
+        """
+        link = (self.settings or {}).get("link", "").strip()
+        text = (self.text or "").strip()
+        if not link or link in text:
+            return self.text or ""
+        return f"{text}\n{link}" if text else link
+
 
 async def read_media_bytes(media) -> bytes:  # noqa: ANN001
     """Байты медиафайла из хранилища (local или S3) — для загрузки в соцсеть."""
     from ..services import storage
     return await storage.read_file(media.file_path)
+
+
+def media_filename(media, default: str = "file") -> str:
+    """Имя файла для multipart — у медиафайла name может быть пустым.
+
+    Расширение важно: VK и OK определяют тип загружаемого файла по имени.
+    """
+    name = (getattr(media, "name", "") or "").strip()
+    if name:
+        return name
+    ext = {"photo": ".jpg", "video": ".mp4"}.get(getattr(media, "type", ""), "")
+    stem = default.rsplit(".", 1)[0] or "file"
+    return f"{stem}{ext}" if ext else default
 
 
 async def read_media_bytes_to_file(media, dst_path: str) -> int:  # noqa: ANN001
@@ -90,6 +110,9 @@ class SocialAdapter(ABC):
     source_id: int = 0
     name: str = ""
     capabilities: tuple[str, ...] = ()
+    # Сеть умеет публиковать ссылку сама (вложение с превью / свой флаг).
+    # Если False — ссылка из настроек дописывается в текст поста конвейером.
+    handles_link: bool = False
 
     # --- подключение аккаунта ---
     async def fetch_pages(self, account, extra: dict | None = None) -> list[PageInfo]:  # noqa: ANN001
@@ -122,16 +145,3 @@ class SocialAdapter(ABC):
     async def fetch_stats(self, page, external_id: str) -> dict | None:  # noqa: ANN001
         """{'views': int, 'likes': int, 'reposts': int, 'comments': int} или None."""
         return None
-
-    # --- утилиты ---
-    @property
-    def http(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=60, follow_redirects=True)
-
-    async def close(self, client: httpx.AsyncClient) -> None:
-        await client.aclose()
-
-
-async def run_blocking(fn, *args):
-    """Выполнить блокирующую функцию (напр. Telethon) вне event loop."""
-    return await asyncio.to_thread(fn, *args)

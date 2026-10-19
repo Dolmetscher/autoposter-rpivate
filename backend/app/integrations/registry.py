@@ -1,6 +1,4 @@
 """Реестр адаптеров. Каждая поддерживаемая соцсеть реализует SocialAdapter."""
-from functools import lru_cache
-
 from ..constants import PLANNED_SOURCES, SOURCES
 from .base import AdapterError, SocialAdapter
 from .dzen import DzenAdapter

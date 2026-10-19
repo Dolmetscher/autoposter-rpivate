@@ -86,3 +86,91 @@ async def test_fetch_pages_auto_detect_failure_hint(account, monkeypatch):
     monkeypatch.setattr(VKAdapter, "call", fake_call)
     with pytest.raises(AdapterError, match="укажите"):
         await _adapter().fetch_pages(account)
+
+
+# ---------- публикация со ссылкой ----------
+
+class _Resp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def _fake_client(monkeypatch, responses: dict, captured: dict):
+    """Подменяет httpx.AsyncClient внутри модуля vk: responses — по URL метода."""
+    import httpx as _httpx
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, data=None, **kw):
+            captured.setdefault("calls", []).append((url, data))
+            key = next((k for k in responses if k in url), None)
+            if key is None:
+                return _Resp({"response": 1})
+            payload = responses[key]
+            if isinstance(payload, Exception):
+                return _Resp({"error": {"error_msg": str(payload)}})
+            return _Resp({"response": payload})
+
+    orig = _httpx.AsyncClient
+    _httpx.AsyncClient = FakeClient
+    return orig
+
+
+def _page(account):
+    from types import SimpleNamespace
+    return SimpleNamespace(account=account, social_page_id="987",
+                           page_kind="group", account_id=1)
+
+
+async def test_publish_link_goes_to_attachments(account, monkeypatch):
+    """Ссылка уходит прямо в attachments: отдельного метода API для ссылки нет,
+    а VK сам разворачивает из URL превью (Open Graph)."""
+    from app.integrations.base import PublishContent
+
+    captured = {}
+    orig = _fake_client(monkeypatch, {"wall.post": {"post_id": 42}}, captured)
+    try:
+        out = await _adapter().publish(
+            _page(account),
+            PublishContent(text="Материал", settings={"link": "https://zennoprirokat.ru/x"}),
+        )
+    finally:
+        import httpx as _httpx
+        _httpx.AsyncClient = orig
+
+    assert out.ok
+    wall = next(c for u, c in captured["calls"] if "wall.post" in u)
+    assert wall["attachments"] == "https://zennoprirokat.ru/x"
+    # ссылка не дублируется в тексте
+    assert wall["message"] == "Материал"
+    # вызова несуществующего links.add быть не должно
+    assert not any("links.add" in u for u, _ in captured["calls"])
+
+
+async def test_publish_without_link_has_empty_attachments(account, monkeypatch):
+    from app.integrations.base import PublishContent
+
+    captured = {}
+    orig = _fake_client(monkeypatch, {"wall.post": {"post_id": 42}}, captured)
+    try:
+        out = await _adapter().publish(
+            _page(account), PublishContent(text="Материал"))
+    finally:
+        import httpx as _httpx
+        _httpx.AsyncClient = orig
+
+    assert out.ok
+    wall = next(c for u, c in captured["calls"] if "wall.post" in u)
+    assert wall["attachments"] == ""
+    assert wall["message"] == "Материал"
