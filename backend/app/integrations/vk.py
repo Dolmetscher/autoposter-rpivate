@@ -2,12 +2,14 @@
 посты на стене, фото, видео/клипы, истории, пин, автоудаление, источники кросспостинга."""
 from __future__ import annotations
 
+import json
+import mimetypes
 import re
 
 import httpx
 
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
-                   SourceItem, media_filename, read_media_bytes)
+                   SourceItem, media_filename, read_media_bytes, upload_filename)
 
 API = "https://api.vk.com/method"
 V = "5.199"
@@ -25,10 +27,7 @@ class VKAdapter(SocialAdapter):
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(f"{API}/{method}",
                                   data={**params, "access_token": token, "v": V})
-        data = r.json()
-        if "error" in data:
-            raise AdapterError(f"VK {method}: {data['error'].get('error_msg', 'ошибка')}")
-        return data["response"]
+        return self._unwrap(method, r)
 
     @staticmethod
     def owner_id(page) -> int:  # noqa: ANN001
@@ -97,6 +96,74 @@ class VKAdapter(SocialAdapter):
                          group.get("photo_100", ""), kind="group")]
 
     # ---------- публикация ----------
+    @staticmethod
+    def _upload_payload(kind: str, up, keys: tuple[str, ...] = ("server", "photo", "hash"),
+                        required: str = "photo") -> dict:
+        """Параметры сохранения из ответа сервера загрузки (server/photo/hash).
+
+        Ответ сервера загрузки бывает двух видов:
+        * классический — {"server": 123, "photo": "c141990203", "hash": "..."};
+        * современный — {"server": 123, "photo": "[{...json с данными фото...}]", "hash": "..."}.
+
+        Если файл не принят, VK отвечает HTTP 200, но с пустым photo (или с
+        объектом error). Раньше такой ответ молча уходил в photos.saveWallPhoto
+        без параметра photo, и пользователь видел невнятное «photo is undefined»
+        вместо настоящей причины.
+        """
+        try:
+            data = up.json()
+        except Exception as e:  # noqa: BLE001 — ответ мог прийти не-JSON (прокси, заглушка)
+            raise AdapterError(f"VK: сервер загрузки {kind} вернул не-JSON ответ: {e}")
+        if not isinstance(data, dict):
+            raise AdapterError(f"VK: неожиданный ответ сервера загрузки {kind}: {data!r}")
+        err = data.get("error")
+        if err:
+            msg = err.get("error_msg", "ошибка") if isinstance(err, dict) else str(err)
+            raise AdapterError(f"VK: загрузка {kind} не удалась — {msg}")
+        payload = {k: str(v) for k, v in data.items() if k in keys}
+        if not payload.get(required):
+            raise AdapterError(
+                f"VK: сервер загрузки не принял файл ({kind}) — ответ: {data!r}")
+        return payload
+
+    @staticmethod
+    def _photo_variants(photo: str) -> list[str]:
+        """Альтернативные значения параметра photo для photos.saveWallPhoto.
+
+        ВК принимает либо JSON-строку с данными загруженных фото (новый формат
+        сервера загрузки), либо идентификатор фото из этого JSON (старый формат).
+        """
+        out: list[str] = []
+        if not photo:
+            return out
+        try:
+            items = json.loads(photo)
+        except (TypeError, ValueError):
+            return [photo]
+        if not isinstance(items, list):
+            return []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            if it.get("photo"):
+                out.append(str(it["photo"]).split(":")[0])
+            if it.get("kid"):
+                out.append(str(it["kid"]))
+        return out
+
+    @staticmethod
+    def _first_item(items) -> dict:  # noqa: ANN001
+        """Первый объект из ответа VK (список, либо объект с items/photo/doc)."""
+        if isinstance(items, dict):
+            items = items.get("items") or items.get("photo") or items.get("doc") or [items]
+        if isinstance(items, list):
+            if not items:
+                raise AdapterError("VK: пустой ответ при сохранении файла")
+            items = items[0]
+        if not isinstance(items, dict):
+            raise AdapterError(f"VK: неожиданный ответ при сохранении файла: {items!r}")
+        return items
+
     async def _upload_photo(self, client: httpx.AsyncClient, token: str, group_id: int | None,
                             media) -> str:  # noqa: ANN001
         params = {"access_token": token, "v": V}
@@ -105,14 +172,43 @@ class VKAdapter(SocialAdapter):
         r = await client.post(f"{API}/photos.getWallUploadServer", data=params)
         info = self._unwrap("photos.getWallUploadServer", r)
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
-        up = await client.post(upload_url, files={"photo": (media_filename(media, "photo.jpg"),
-                                                           await read_media_bytes(media))})
-        saved = await client.post(f"{API}/photos.saveWallPhoto", data={
-            **params, **{k: str(v) for k, v in up.json().items()
-                         if k in ("server", "photo", "hash")}})
-        items = self._unwrap("photos.saveWallPhoto", saved)
-        it = items[0]
-        return f"photo{it['owner_id']}_{it['id']}"
+        if not isinstance(upload_url, str) or not upload_url:
+            raise AdapterError("VK: не вернулась ссылка на сервер загрузки фото")
+        # Имя файла — ASCII с настоящим расширением: ВК определяет тип файла по
+        # имени, а кириллица в multipart-имени ломает разбор формы на стороне ВК.
+        filename = upload_filename(media, "photo.jpg")
+        ctype = mimetypes.guess_type(filename)[0] or "image/jpeg"
+        up = await client.post(upload_url, files={
+            "photo": (filename, await read_media_bytes(media), ctype)})
+        payload = self._upload_payload("фото", up)
+
+        # Сохраняем фото на стене: сначала новый формат (JSON с данными фото),
+        # затем — идентификатор из него, если ВК новый формат не принял.
+        variants = [payload["photo"]] + self._photo_variants(payload.get("photo", ""))
+        items = None
+        last_error: AdapterError | None = None
+        for photo_value in variants:
+            saved = await client.post(f"{API}/photos.saveWallPhoto", data={
+                **params, **payload, "photo": photo_value})
+            try:
+                items = self._unwrap("photos.saveWallPhoto", saved)
+                break
+            except AdapterError as e:
+                last_error = e
+        if items is None:
+            raise last_error or AdapterError("VK photos.saveWallPhoto: не удалось сохранить фото")
+
+        it = self._first_item(items)
+        photo_id = it.get("id")
+        owner = it.get("owner_id")
+        if not photo_id:
+            # ответ без идентификатора — берём его из загруженного фото
+            ids = self._photo_variants(payload.get("photo", ""))
+            photo_id = ids[0] if ids else ""
+            owner = owner if owner is not None else (-group_id if group_id else 0)
+        if not photo_id:
+            raise AdapterError(f"VK: не удалось получить идентификатор фото: {it!r}")
+        return f"photo{owner if owner is not None else 0}_{photo_id}"
 
     async def _upload_video(self, client: httpx.AsyncClient, token: str, group_id: int | None,
                             media) -> str:  # noqa: ANN001
@@ -124,8 +220,10 @@ class VKAdapter(SocialAdapter):
         r = await client.post(f"{API}/video.save", data=params)
         info = self._unwrap("video.save", r)
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
+        if not isinstance(upload_url, str) or not upload_url:
+            raise AdapterError("VK: не вернулась ссылка на сервер загрузки видео")
         await client.post(upload_url,
-                          files={"video_file": (media_filename(media, "video.mp4"),
+                          files={"video_file": (upload_filename(media, "video.mp4"),
                                                 await read_media_bytes(media))})
         return f"video{info['owner_id']}_{info['video_id']}"
 
@@ -138,15 +236,16 @@ class VKAdapter(SocialAdapter):
         r = await client.post(f"{API}/docs.getWallUploadServer", data=params)
         info = self._unwrap("docs.getWallUploadServer", r)
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
-        up = await client.post(upload_url, files={"file": (title, await read_media_bytes(media))})
-        saved = await client.post(f"{API}/docs.save", data={
-            **params, **{k: str(v) for k, v in up.json().items()
-                         if k in ("file", "title", "tags")}})
+        if not isinstance(upload_url, str) or not upload_url:
+            raise AdapterError("VK: не вернулась ссылка на сервер загрузки документа")
+        up = await client.post(upload_url, files={"file": (upload_filename(media, "document"),
+                                                           await read_media_bytes(media))})
+        payload = self._upload_payload("документа", up, keys=("file", "title", "tags"),
+                                       required="file")
+        saved = await client.post(f"{API}/docs.save", data={**params, **payload})
         items = self._unwrap("docs.save", saved)
-        if isinstance(items, dict):
-            items = items.get("doc") or items.get("items") or [items]
-        it = items[0] if isinstance(items, list) else items
-        return f"doc{it['owner_id']}_{it['id']}"
+        it = self._first_item(items)
+        return f"doc{it.get('owner_id', 0)}_{it.get('id', '')}"
 
     async def _post_story(self, client: httpx.AsyncClient, token: str, page,
                           content: PublishContent) -> PublishOutcome:  # noqa: ANN001
@@ -164,9 +263,16 @@ class VKAdapter(SocialAdapter):
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
         
         field = "photo" if media.type == "photo" else "video_file"
-        up = await client.post(upload_url, files={field: (media_filename(media, "media.jpg"),
+        up = await client.post(upload_url, files={field: (upload_filename(media, "media.jpg"),
                                                            await read_media_bytes(media))})
-        data = up.json()
+        try:
+            data = up.json()
+        except Exception as e:  # noqa: BLE001 — ответ мог прийти не-JSON
+            raise AdapterError(f"VK истории: сервер загрузки вернул не-JSON ответ: {e}")
+        if isinstance(data, dict) and data.get("error"):
+            err = data["error"]
+            msg = err.get("error_msg", "ошибка") if isinstance(err, dict) else str(err)
+            raise AdapterError(f"VK истории: загрузка не удалась — {msg}")
         items = (data.get("response") or {}).get("items") or []
         if not items:
             raise AdapterError(f"VK истории: загрузка не удалась: {data}")
@@ -180,9 +286,16 @@ class VKAdapter(SocialAdapter):
 
     @staticmethod
     def _unwrap(method: str, r: httpx.Response):
-        data = r.json()
-        if "error" in data:
-            raise AdapterError(f"VK {method}: {data['error'].get('error_msg', 'ошибка')}")
+        try:
+            data = r.json()
+        except Exception as e:  # noqa: BLE001 — не-JSON ответ (прокси, заглушка, HTML)
+            raise AdapterError(f"VK {method}: сервер вернул не-JSON ответ: {e}")
+        if isinstance(data, dict) and "error" in data:
+            err = data["error"]
+            msg = err.get("error_msg", "ошибка") if isinstance(err, dict) else str(err)
+            raise AdapterError(f"VK {method}: {msg}")
+        if not isinstance(data, dict) or "response" not in data:
+            raise AdapterError(f"VK {method}: неожиданный ответ {data!r}")
         return data["response"]
 
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001

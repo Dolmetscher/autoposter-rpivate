@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
+import unicodedata
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 class AdapterError(Exception):
@@ -78,6 +81,26 @@ def media_filename(media, default: str = "file") -> str:
     ext = {"photo": ".jpg", "video": ".mp4"}.get(getattr(media, "type", ""), "")
     stem = default.rsplit(".", 1)[0] or "file"
     return f"{stem}{ext}" if ext else default
+
+
+def upload_filename(media, default: str = "file") -> str:
+    """ASCII-имя файла для multipart-загрузки с сохранением расширения.
+
+    Расширение определяет тип файла на стороне соцсети, а не-ASCII символы
+    (кириллица в имени) ломают разбор multipart-формы: сервер не находит файл
+    и отвечает «файл не принят». Поэтому имя приводим к безопасному виду,
+    как это делают официальные клиенты VK (photo.jpg / photo.png).
+    """
+    name = (getattr(media, "name", "") or "").strip()
+    if not name:
+        return default
+    suffix = Path(name).suffix.lower() or Path(default).suffix.lower()
+    stem = Path(name).stem or Path(default).stem or "file"
+    if not any(ch.isascii() and ch.isalpha() for ch in stem):
+        stem = Path(default).stem or "file"
+    ascii_stem = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode()
+    ascii_stem = re.sub(r"[^A-Za-z0-9_-]+", "_", ascii_stem).strip("_")[:60]
+    return f"{ascii_stem or 'file'}{suffix}"
 
 
 async def read_media_bytes_to_file(media, dst_path: str) -> int:  # noqa: ANN001
