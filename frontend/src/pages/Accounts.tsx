@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, getToken } from '../lib/api'
+import { api, API_BASE, getToken } from '../lib/api'
 import { Account, SourceInfo, sourceColor } from '../lib/types'
 
 export default function Accounts({ sources, reload }: { sources: SourceInfo[]; reload: () => void }) {
@@ -49,7 +49,11 @@ export default function Accounts({ sources, reload }: { sources: SourceInfo[]; r
   }
 
   const oauthStart = (slug: string) => {
-    window.location.href = `/api/web/oauth/${slug}/start?token=${getToken()}`
+    // переход браузера на страницу провайдера не умеет слать заголовки —
+    // токен передаём в query-параметре (его принимает /oauth/{slug}/start)
+    const token = getToken()
+    if (!token) { setError('Нужно войти в систему'); return }
+    window.location.href = `${API_BASE}/api/web/oauth/${slug}/start?token=${encodeURIComponent(token)}`
   }
 
   const remove = async (id: number) => {

@@ -1,3 +1,5 @@
+import { fmtDateIn } from './tz'
+
 export interface SourceInfo {
   id: number
   slug: string
@@ -78,6 +80,7 @@ export interface Project {
   id: number
   name: string
   settings: Record<string, unknown>
+  account_ids?: number[]
 }
 
 export interface Schedule {
@@ -126,12 +129,8 @@ export function sourceColor(sources: SourceInfo[], id: number): string {
 }
 
 export function fmtDate(iso: string | null): string {
-  if (!iso) return '—'
-  const d = new Date(iso.includes('T') ? iso + (iso.endsWith('Z') ? '' : 'Z') : iso)
-  if (isNaN(d.getTime())) return iso
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
+  // даты из API хранятся в naive-UTC; показываем в таймзоне браузера
+  // (для таймзоны пользователя есть fmtDateIn в lib/tz)
+  return fmtDateIn(iso)
 }
 

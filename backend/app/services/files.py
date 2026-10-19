@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -30,6 +31,13 @@ async def save_upload(user_id: int, file: UploadFile, s: AsyncSession,
                       file_id_hint: str | None = None,
                       force_type: str | None = None) -> MediaFile:
     file_id = file_id_hint or gen_file_id()
+    if file_id_hint:
+        # id — первичный ключ, общий для всех пользователей: занятый id
+        # приводил бы к падению вставки, поэтому проверяем заранее
+        taken = (await s.execute(
+            select(MediaFile.id).where(MediaFile.id == file_id))).first()
+        if taken:
+            raise HTTPException(409, "Файл с таким идентификатором уже существует")
     ftype = force_type or detect_type(file.filename, file.content_type or "")
     folder = today_folder()
     ext = Path(file.filename or "").suffix.lower() or mimetypes.guess_extension(file.content_type or "") or ".bin"

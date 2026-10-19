@@ -50,7 +50,7 @@ async def hashtags(payload: HashtagsIn, user: User = Depends(get_current_user),
 @router.get("/best-hours")
 async def best_hours(user: User = Depends(get_current_user),
                      s: AsyncSession = Depends(get_session)):
-    hours = await ai_service.best_hours(s, user.id)
+    hours = await ai_service.best_hours(s, user.id, tz_name=user.timezone)
     return {"hours": hours,
             "hint": ("Лучшие часы по средней статистике просмотров ваших постов"
                      if hours else "Пока мало данных — опубликуйте несколько постов")}

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...db import get_session
 from ...deps import get_current_user
 from ...integrations.base import AdapterError
-from ...models import CrosspostSeen, CrosspostSource, User
+from ...models import CrosspostSeen, CrosspostSource, SocialPage, User
 from ...schemas import CrosspostSourceIn
 from ...services import crosspost as crosspost_service
 from ...util import utcnow
@@ -32,6 +32,18 @@ async def list_sources(user: User = Depends(get_current_user),
     return {"list": [out(x) for x in rows]}
 
 
+async def _check_pages(s: AsyncSession, user: User, page_ids: list[int]) -> None:
+    """Цели кросспостинга — только страницы пользователя."""
+    if not page_ids:
+        return
+    found = set((await s.execute(
+        select(SocialPage.id).where(SocialPage.user_id == user.id,
+                                     SocialPage.id.in_(page_ids)))).scalars().all())
+    missing = [pid for pid in page_ids if pid not in found]
+    if missing:
+        raise HTTPException(400, f"Страницы не найдены: {missing}")
+
+
 @router.post("", status_code=201)
 async def create_source(payload: CrosspostSourceIn, user: User = Depends(get_current_user),
                         s: AsyncSession = Depends(get_session)):
@@ -40,6 +52,7 @@ async def create_source(payload: CrosspostSourceIn, user: User = Depends(get_cur
         await limits.ensure_within(s, user, "sources")
     except ValueError as e:
         raise HTTPException(400, str(e))
+    await _check_pages(s, user, payload.target_page_ids)
     src = CrosspostSource(user_id=user.id, **payload.model_dump())
     s.add(src)
     await s.commit()
@@ -55,6 +68,7 @@ async def update_source(source_id: int, payload: CrosspostSourceIn,
         CrosspostSource.id == source_id, CrosspostSource.user_id == user.id))).scalar_one_or_none()
     if not src:
         raise HTTPException(404, "Источник не найден")
+    await _check_pages(s, user, payload.target_page_ids)
     for k, v in payload.model_dump().items():
         setattr(src, k, v)
     await s.commit()

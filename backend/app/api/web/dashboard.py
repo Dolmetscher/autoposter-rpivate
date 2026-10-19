@@ -23,8 +23,11 @@ async def dashboard(user: User = Depends(get_current_user),
         "published": (await s.execute(select(func.count(Post.id))
                                       .where(Post.user_id == user.id,
                                              Post.status.in_(["published", "partial"])))).scalar_one(),
+        # счётчик ошибок — только по постам пользователя (иначе видны чужие сбои)
         "failed": (await s.execute(select(func.count(PostTarget.id))
-                                   .where(PostTarget.status == "failed"))).scalar_one(),
+                                   .join(Post, Post.id == PostTarget.post_id)
+                                   .where(Post.user_id == user.id,
+                                          PostTarget.status == "failed"))).scalar_one(),
     }
     upcoming = (await s.execute(
         select(Post).options(selectinload(Post.texts))

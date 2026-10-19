@@ -32,16 +32,14 @@ def tick():
 @celery_app.task(name="app.celery_app.publish_post_task",
                  bind=True, max_retries=3, default_retry_delay=60)
 def publish_post_task(self, post_id: int):  # noqa: ANN001
-    from sqlalchemy import select
-
     from .db import SessionFactory
-    from .models import Post
     from .services import publish as publish_service
 
     async def job():
         async with SessionFactory() as session:
-            post = (await session.execute(
-                select(Post).where(Post.id == post_id))).scalar_one_or_none()
+            # связи грузим заранее: ленивая загрузка в async-сессии
+            # вне flush падает с MissingGreenlet
+            post = await publish_service.load_post_for_publish(session, post_id)
             if post is None or post.status == "published":
                 return
             await publish_service.publish_post_now(session, post)

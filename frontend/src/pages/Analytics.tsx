@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import { fmtDate, sourceColor, sourceName, SourceInfo } from '../lib/types'
+import { fmtDateIn, useUserTz } from '../lib/tz'
+import { sourceColor, sourceName, SourceInfo } from '../lib/types'
 
 interface Row {
   post_id: number
@@ -28,6 +29,7 @@ const PERIODS = [
 
 export default function Analytics({ sources }: { sources: SourceInfo[] }) {
   const [days, setDays] = useState(30)
+  const tz = useUserTz()
   const [data, setData] = useState<Data | null>(null)
 
   useEffect(() => {
@@ -91,7 +93,7 @@ export default function Analytics({ sources }: { sources: SourceInfo[] }) {
           <tbody>
             {data.list.map((r) => (
               <tr key={r.target_id}>
-                <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.published_at)}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{fmtDateIn(r.published_at, tz)}</td>
                 <td>
                   <span className="chip">
                     <span className="dot" style={{ background: sourceColor(sources, r.source_id) }} />

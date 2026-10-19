@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
+import { useUserTz, zonedParts } from '../lib/tz'
 import { Account, MediaFile, Post, Project, Schedule, SourceInfo, sourceColor, sourceName } from '../lib/types'
 
 interface Template {
@@ -47,6 +48,7 @@ export default function PostEditor({ sources, accounts }: Props) {
   const [busyT, setBusyT] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(editing)
+  const tz = useUserTz()
 
   const allPages = useMemo(
     () => accounts.flatMap((a) => a.pages.map((p) => ({ ...p, account: a }))),
@@ -66,16 +68,18 @@ export default function PostEditor({ sources, accounts }: Props) {
       setPageIds(p.targets.map((t) => t.page_id))
       setWhenType(p.publication_when_type === 4 ? 2 : p.publication_when_type)
       if (p.publication_date) {
-        const d = new Date(p.publication_date + (p.publication_date.endsWith('Z') ? '' : 'Z'))
-        setDate(d.toISOString().slice(0, 10))
-        setTime(d.toISOString().slice(11, 16))
+        // показываем время в таймзоне пользователя: в API оно хранится в UTC,
+        // а бэкенд при сохранении трактует введённое значение как локальное
+        const z = zonedParts(p.publication_date, tz)
+        setDate(z.date)
+        setTime(z.time)
       }
       setScheduleId(p.schedule_id ?? '')
       setProjectId(p.project_id ?? '')
       setSettings(p.settings ?? {})
-      const ids = [...p.media_ids, ...p.document_ids]
-      Promise.all(ids.map((mid) => api.get<MediaFile>(`/api/web/files/${mid}/raw`).catch(() => null)))
-      // raw не отдаёт метаданные; получаем их списком
+      setLink((p.settings?.link as string) ?? '')
+      setLinkPreview(p.settings?.link_preview !== false)
+      // метаданные файлов берём списком: raw отдаёт содержимое, а не описание
       api.get<{ list: MediaFile[] }>('/api/web/files').then((fl) => {
         const byId = new Map(fl.list.map((m) => [m.id, m]))
         setMedia(p.media_ids.map((mid) => byId.get(mid)).filter(Boolean) as MediaFile[])
@@ -83,7 +87,7 @@ export default function PostEditor({ sources, accounts }: Props) {
       })
       setLoading(false)
     })
-  }, [editing, id])
+  }, [editing, id, tz])
 
   const upload = async (files: FileList | null, kind: 'media' | 'doc') => {
     if (!files) return
@@ -438,7 +442,7 @@ export default function PostEditor({ sources, accounts }: Props) {
                     {bestHours.map((h) => (
                       <button key={h} className="secondary" style={{ padding: '4px 8px' }}
                               title="Час с лучшей статистикой просмотров"
-                              onClick={() => { setDate(new Date().toISOString().slice(0, 10)); setTime(`${String(h).padStart(2, '0')}:00`) }}>
+                              onClick={() => { setDate(zonedParts(new Date().toISOString(), tz).date); setTime(`${String(h).padStart(2, '0')}:00`) }}>
                         {String(h).padStart(2, '0')}:00
                       </button>
                     ))}

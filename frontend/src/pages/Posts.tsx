@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { api } from '../lib/api'
-import { fmtDate, Post, sourceColor, sourceName, STATUS_RU, SourceInfo } from '../lib/types'
+import { fmtDateIn, useUserTz } from '../lib/tz'
+import { Post, sourceColor, sourceName, STATUS_RU, SourceInfo } from '../lib/types'
 
 export default function Posts({ sources }: { sources: SourceInfo[] }) {
   const [posts, setPosts] = useState<Post[]>([])
@@ -10,6 +11,7 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
   const [total, setTotal] = useState(0)
   const [selected, setSelected] = useState<number[]>([])
   const [myRole, setMyRole] = useState('owner')
+  const tz = useUserTz()
 
   const location = useLocation()
 
@@ -109,7 +111,7 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
                       <div className="hint">📎 {p.media_ids.length + p.document_ids.length} вложений</div>
                     )}
                   </td>
-                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(p.publication_date)}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDateIn(p.publication_date, tz)}</td>
                   <td>
                     <div className="row" style={{ gap: 4 }}>
                       {Array.from(new Set(p.targets.map((t) => t.source_id))).map((sid) => (

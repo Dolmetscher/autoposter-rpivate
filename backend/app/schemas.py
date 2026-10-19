@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -183,6 +184,34 @@ class ApiTokenIn(BaseModel):
     name: str = "API-токен"
 
 
+def _tz(name: str | None):
+    """Таймзона пользователя; при неизвестной — UTC (не роняем запрос)."""
+    if not name:
+        return ZoneInfo("UTC")
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def local_day_bounds_utc(value: str, tz_name: str | None = None) -> tuple[datetime, datetime]:
+    """Границы локального дня (в таймзоне пользователя) в naive-UTC.
+
+    Нужны для фильтров по дате: publication_date хранится в UTC, а пользователь
+    выбирает «день» в своей таймзоне — без пересчёта границы съезжают на
+    разницу часов (и на целый день в случае смены летнего времени)."""
+    naive = parse_publication_date(value)
+    if naive is None:
+        raise ValueError(f"Не удалось разобрать дату: {value}")
+    tz = _tz(tz_name)
+    day = naive.date()
+    utc = ZoneInfo("UTC")
+    start = datetime(day.year, day.month, day.day, tzinfo=tz).astimezone(utc).replace(tzinfo=None)
+    nxt = day + timedelta(days=1)
+    end = datetime(nxt.year, nxt.month, nxt.day, tzinfo=tz).astimezone(utc).replace(tzinfo=None)
+    return start, end
+
+
 def parse_publication_date(value: str | None, tz_name: str | None = None) -> datetime | None:
     """Понимает ISO, 'дд.мм.гггг' и 'дд.мм.гггг ЧЧ:ММ'.
 
@@ -197,16 +226,14 @@ def parse_publication_date(value: str | None, tz_name: str | None = None) -> dat
         try:
             dt = datetime.strptime(value, fmt)
             if tz_name:
-                from zoneinfo import ZoneInfo
-                dt = dt.replace(tzinfo=ZoneInfo(tz_name)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+                dt = dt.replace(tzinfo=_tz(tz_name)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
             return dt
         except ValueError:
             continue
     try:
         dt = datetime.fromisoformat(value)
         if tz_name and dt.tzinfo is None:
-            from zoneinfo import ZoneInfo
-            dt = dt.replace(tzinfo=ZoneInfo(tz_name)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+            dt = dt.replace(tzinfo=_tz(tz_name)).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
         return dt
     except ValueError:
         raise ValueError(f"Не удалось разобрать дату: {value}")
@@ -214,10 +241,8 @@ def parse_publication_date(value: str | None, tz_name: str | None = None) -> dat
 
 def next_schedule_slot(slots: list[dict], tz_name: str, from_dt: datetime | None = None) -> datetime:
     """Ближайший момент слота расписания в таймзоне пользователя (возвращает naive UTC)."""
-    from zoneinfo import ZoneInfo
-
     from_dt = from_dt or utcnow()
-    tz = ZoneInfo(tz_name)
+    tz = _tz(tz_name)
     now_local = from_dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
     candidates: list[datetime] = []
     for day_shift in range(0, 8):

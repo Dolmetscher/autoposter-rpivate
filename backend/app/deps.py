@@ -11,6 +11,19 @@ from .util import utcnow
 bearer = HTTPBearer(auto_error=False)
 
 
+async def _acting_user(identity: User, s: AsyncSession) -> tuple[User, str]:
+    """Действующий пользователь и его роль: член команды работает от имени
+    владельца команды (роль — owner | admin | editor | viewer)."""
+    member = (await s.execute(
+        select(TeamMember).where(TeamMember.member_user_id == identity.id)
+    )).scalar_one_or_none()
+    if member is not None:
+        owner = await s.get(User, member.team_owner_id)
+        if owner is not None:
+            return owner, member.role
+    return identity, "owner"
+
+
 async def get_current_user(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
@@ -28,18 +41,29 @@ async def get_current_user(
     if identity is None:
         raise HTTPException(401, "Пользователь не найден")
 
-    member = (await s.execute(
-        select(TeamMember).where(TeamMember.member_user_id == identity.id)
-    )).scalar_one_or_none()
-    if member is not None:
-        owner = await s.get(User, member.team_owner_id)
-        if owner is not None:
-            request.state.role = member.role
-            request.state.identity = identity
-            return owner
-    request.state.role = "owner"
+    user, role = await _acting_user(identity, s)
+    request.state.role = role
     request.state.identity = identity
-    return identity
+    return user
+
+
+async def get_actor(request: Request, s: AsyncSession) -> tuple[User, str]:
+    """Действующий пользователь и роль для сценариев без заголовка Authorization:
+    токен принимается либо из заголовка, либо из query-параметра ?token=
+    (нужно для перехода браузера на страницу авторизации OAuth-провайдера)."""
+    auth = request.headers.get("Authorization", "")
+    raw = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    raw = raw or request.query_params.get("token", "")
+    user_id = decode_access_token(raw)
+    if user_id is None:
+        raise HTTPException(401, "Требуется авторизация")
+    identity = await s.get(User, user_id)
+    if identity is None:
+        raise HTTPException(401, "Пользователь не найден")
+    user, role = await _acting_user(identity, s)
+    request.state.role = role
+    request.state.identity = identity
+    return user, role
 
 
 def _role(request: Request) -> str:
@@ -92,6 +116,3 @@ async def get_page_checked(user: User, page_id: int, s: AsyncSession) -> SocialP
     if page is None:
         raise HTTPException(404, f"Страница {page_id} не найдена")
     return page
-
-
-get_session_dep = get_session

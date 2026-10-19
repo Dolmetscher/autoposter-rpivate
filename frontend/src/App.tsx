@@ -71,7 +71,7 @@ function Shell() {
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/analytics" element={<Analytics sources={sources} />} />
         <Route path="/accounts" element={<Accounts sources={sources} reload={reloadMeta} />} />
-        <Route path="/projects" element={<Projects />} />
+        <Route path="/projects" element={<Projects accounts={accounts} />} />
         <Route path="/schedules" element={<Schedules />} />
           <Route path="/crosspost" element={<Crosspost sources={sources} accounts={accounts} />} />
           <Route path="/team" element={<Team />} />

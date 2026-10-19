@@ -13,6 +13,8 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
+from ..models import AppState
+from ..util import utcnow
 from . import files as files_service
 from . import notify
 from . import publish as publish_service
@@ -20,6 +22,36 @@ from . import publish as publish_service
 log = logging.getLogger("tgbot")
 
 _offsets: dict[str, int] = {}
+
+
+def _offset_key(token: str) -> str:
+    """Ключ хранения offset в app_state (токен бота в базу не кладём)."""
+    import hashlib
+
+    return "tgbot_" + hashlib.sha1(token.encode()).hexdigest()[:16]
+
+
+async def _load_offset(s: AsyncSession, token: str) -> int:
+    key = _offset_key(token)
+    row = await s.get(AppState, key)
+    if row is not None:
+        try:
+            return int((row.value or {}).get("offset") or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+async def _save_offset(s: AsyncSession, token: str, offset: int) -> None:
+    key = _offset_key(token)
+    row = await s.get(AppState, key)
+    value = {"offset": offset}
+    if row is None:
+        s.add(AppState(key=key, value=value, updated_at=utcnow()))
+    else:
+        row.value = value
+        row.updated_at = utcnow()
+    await s.flush()
 
 
 async def bot_loop(session_factory) -> None:
@@ -41,7 +73,9 @@ async def bot_loop(session_factory) -> None:
 
 
 async def _poll_one(s: AsyncSession, user_id: int, token: str, cfg: dict) -> None:
-    offset = _offsets.get(token, 0)
+    # offset хранится в БД: иначе после перезапуска бот получает от Telegram
+    # старые сообщения заново и создаёт дубликаты постов
+    offset = await _load_offset(s, token)
     async with httpx.AsyncClient(timeout=35) as client:
         r = await client.get(
             f"https://api.telegram.org/bot{token}/getUpdates",
@@ -56,6 +90,8 @@ async def _poll_one(s: AsyncSession, user_id: int, token: str, cfg: dict) -> Non
         msg = upd.get("message")
         if msg:
             await _handle_message(s, user_id, token, cfg, msg)
+    if _offsets.get(token, 0) != offset:
+        await _save_offset(s, token, _offsets[token])
 
 
 async def _handle_message(s: AsyncSession, user_id: int, token: str, cfg: dict,

@@ -58,11 +58,6 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
     }
   }
 
-  const toggleActive = async (x: CrosspostSource) => {
-    await api.put(`/api/web/crosspost/${x.id}`, { ...x })
-    load()
-  }
-
   const del = async (id: number) => {
     if (!confirm('Удалить источник?')) return
     await api.del(`/api/web/crosspost/${id}`)

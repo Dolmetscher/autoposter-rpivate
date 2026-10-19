@@ -34,8 +34,13 @@ async def suggest_hashtags(llm_config: dict, text: str) -> str:
     return (data["choices"][0]["message"]["content"] or "").strip()
 
 
-async def best_hours(s: AsyncSession, user_id: int, top: int = 3) -> list[int]:
-    """Часы суток (0–23) с самым высоким средним числом просмотров."""
+async def best_hours(s: AsyncSession, user_id: int, tz_name: str = "UTC",
+                     top: int = 3) -> list[int]:
+    """Часы суток (0–23) с самым высоким средним числом просмотров.
+
+    Часы считаются в таймзоне пользователя: published_at хранится в UTC."""
+    from zoneinfo import ZoneInfo
+
     rows = (await s.execute(
         select(PostTarget.published_at, PostStat.views)
         .join(PostStat, PostStat.target_id == PostTarget.id)
@@ -44,9 +49,14 @@ async def best_hours(s: AsyncSession, user_id: int, top: int = 3) -> list[int]:
     )).all()
     if not rows:
         return []
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
     buckets: dict[int, list[int]] = defaultdict(list)
     for published_at, views in rows:
-        buckets[published_at.hour].append(views or 0)
+        local = published_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
+        buckets[local.hour].append(views or 0)
     ranked = sorted(
         ((hour, sum(vs) / len(vs)) for hour, vs in buckets.items()),
         key=lambda x: x[1], reverse=True)

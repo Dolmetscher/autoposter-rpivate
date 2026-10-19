@@ -233,6 +233,19 @@ def next_repeat_date(post: Post, user_tz: str) -> None:
         t.attempts = 0
 
 
+async def load_post_for_publish(s: AsyncSession, post_id: int) -> Post | None:
+    """Пост со всеми связями, нужными для публикации.
+
+    Связи подгружаем явно: ленивая загрузка relationship в async-сессии
+    вне flush падает с MissingGreenlet."""
+    return (await s.execute(
+        select(Post).options(
+            selectinload(Post.targets).selectinload(PostTarget.page),
+            selectinload(Post.texts),
+            selectinload(Post.attachments).selectinload(PostAttachment.media_file),
+        ).where(Post.id == post_id))).scalar_one_or_none()
+
+
 async def publish_post_now(s: AsyncSession, post: Post) -> Post:
     post.status = "publishing"
     await s.flush()

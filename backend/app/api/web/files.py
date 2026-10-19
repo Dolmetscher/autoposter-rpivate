@@ -1,9 +1,8 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -139,8 +138,8 @@ async def raw_file(file_id: str, user: User = Depends(get_current_user),
         raise HTTPException(404, "Файл не найден")
     if not await storage.file_exists(mf.file_path):
         raise HTTPException(404, "Файл отсутствует в хранилище")
-    data = await storage.read_file(mf.file_path)
     media_type = "image/png" if mf.file_path.endswith(".png") else \
         "image/jpeg" if mf.file_path.endswith((".jpg", ".jpeg")) else \
         "video/mp4" if mf.file_path.endswith(".mp4") else "application/octet-stream"
-    return Response(content=data, media_type=media_type)
+    # отдаём потоком: видео не должно целиком попадать в память процесса
+    return StreamingResponse(storage.iter_file(mf.file_path), media_type=media_type)

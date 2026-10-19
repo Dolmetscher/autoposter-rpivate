@@ -3,18 +3,17 @@
 /files/media/upload, /files/documents/upload, /posts/{id}, /posts/batch/delete."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...deps import get_session, get_token_user
 from ...models import Post, Project, Schedule, SocialAccount, SocialPage, User
-from ...schemas import parse_publication_date
+from ...schemas import local_day_bounds_utc, parse_publication_date
 from ...services import files as files_service
 from ...services import publish as publish_service
 from ...util import utcnow
@@ -184,18 +183,21 @@ async def create_post(payload: PublicPostIn, user: User = Depends(get_token_user
         proj_pages = proj.settings.get("page_ids", [])
         page_ids = page_ids or proj_pages
         if proj.settings.get("interval_minutes"):
-            pub_date = utcnow() + __import__("datetime").timedelta(minutes=int(proj.settings["interval_minutes"]))
+            pub_date = utcnow() + timedelta(minutes=int(proj.settings["interval_minutes"]))
         when_type = 2 if pub_date else 1
 
-    post = await publish_service.create_post(
-        s, user,
-        texts=[{"text": t.text, "source_id": t.source_id} for t in payload.texts],
-        media_ids=media_ids, document_ids=doc_ids,
-        settings=settings, page_ids=page_ids,
-        when_type=when_type, publication_date=pub_date,
-        schedule_id=(payload.schedules_ids[0] if when_type == 3 and payload.schedules_ids else None),
-        project_id=payload.project_id,
-    )
+    try:
+        post = await publish_service.create_post(
+            s, user,
+            texts=[{"text": t.text, "source_id": t.source_id} for t in payload.texts],
+            media_ids=media_ids, document_ids=doc_ids,
+            settings=settings, page_ids=page_ids,
+            when_type=when_type, publication_date=pub_date,
+            schedule_id=(payload.schedules_ids[0] if when_type == 3 and payload.schedules_ids else None),
+            project_id=payload.project_id,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     if when_type == 1:
         await publish_service.publish_post_now(s, post)
     await s.commit()
@@ -219,13 +221,12 @@ async def posts_list(is_published: int | None = None, publication_date: str | No
             filters.append(Post.status.in_(["draft", "scheduled", "publishing", "failed"]))
     if publication_date:
         try:
-            d = datetime.strptime(publication_date, "%d.%m.%Y")
+            day_start, day_end = local_day_bounds_utc(publication_date, user.timezone)
         except ValueError:
             raise HTTPException(400, "publication_date в формате дд.мм.гггг")
-        day_start = d.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + __import__("datetime").timedelta(days=1)
         filters.append(Post.publication_date >= day_start)
         filters.append(Post.publication_date < day_end)
+
     if schedule_id:
         filters.append(Post.schedule_id == schedule_id)
     if project_id:
@@ -260,7 +261,8 @@ async def delete_post(post_id: int, user: User = Depends(get_token_user),
     post = (await s.execute(select(Post).where(Post.id == post_id, Post.user_id == user.id))).scalar_one_or_none()
     if not post:
         raise HTTPException(404, "Пост не найден")
-    await s.execute(sa_delete(Post).where(Post.id == post.id))
+    # удаляем через ORM: тексты, вложения и цели публикации уходят каскадом
+    await s.delete(post)
     await s.commit()
     return {"success": True}
 
@@ -275,6 +277,9 @@ async def batch_delete(payload: BatchDeleteIn, user: User = Depends(get_token_us
     ids = [int(x) for x in payload.ids.split(",") if x.strip().isdigit()]
     if not ids:
         raise HTTPException(400, "Некорректные ids")
-    res = await s.execute(sa_delete(Post).where(Post.user_id == user.id, Post.id.in_(ids)))
+    posts = (await s.execute(
+        select(Post).where(Post.user_id == user.id, Post.id.in_(ids)))).scalars().all()
+    for p in posts:
+        await s.delete(p)
     await s.commit()
-    return {"success": True, "deleted": res.rowcount}
+    return {"success": True, "deleted": len(posts)}

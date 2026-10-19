@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import { fmtDate } from '../lib/types'
+import { fmtDateIn, useUserTz } from '../lib/tz'
 
 interface Dash {
   counts: Record<string, number>
@@ -11,6 +11,7 @@ interface Dash {
 
 export default function Dashboard() {
   const [data, setData] = useState<Dash | null>(null)
+  const tz = useUserTz()
   useEffect(() => {
     api.get<Dash>('/api/web/dashboard').then(setData).catch(() => {})
   }, [])
@@ -42,7 +43,7 @@ export default function Dashboard() {
               <Link to={`/posts/${u.id}`} className="clickable" style={{ color: 'var(--text)', textDecoration: 'none' }}>
                 {u.title || '(без текста)'}
               </Link>
-              <span className="hint">{fmtDate(u.publication_date)}</span>
+              <span className="hint">{fmtDateIn(u.publication_date, tz)}</span>
             </div>
           ))}
         </div>
@@ -55,7 +56,7 @@ export default function Dashboard() {
                 <span className={`badge ${l.level === 'success' ? 'ok' : l.level === 'error' ? 'err' : 'mut'}`}>
                   {l.level === 'success' ? 'успех' : l.level === 'error' ? 'ошибка' : 'инфо'}
                 </span>
-                <span className="hint">{fmtDate(l.created_at)}</span>
+                <span className="hint">{fmtDateIn(l.created_at, tz)}</span>
               </div>
               <div style={{ marginTop: 4 }}>{l.message}</div>
             </div>

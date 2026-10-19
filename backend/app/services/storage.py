@@ -32,12 +32,15 @@ def _client():
 
 
 def local_full(rel_path: str) -> Path:
-    """Полный путь на диске (только режим local). Защищает от выход за пределы каталога."""
+    """Полный путь на диске (только режим local). Защищает от выхода за пределы каталога."""
     root = Path(settings.storage_dir).resolve()
     p = (root / rel_path).resolve()
-    if not str(p).startswith(str(root)):
+    # is_relative_to, а не startswith: иначе соседний каталог «/data/storage2»
+    # прошёл бы проверку префикса «/data/storage»
+    if not p.is_relative_to(root):
         raise ValueError("Некорректный путь файла")
     return p
+
 
 
 async def save_file(rel_path: str, data: bytes) -> None:
@@ -76,6 +79,31 @@ async def read_file(rel_path: str) -> bytes:
         )
         return await asyncio.to_thread(obj["Body"].read)
     return await asyncio.to_thread(local_full(rel_path).read_bytes)
+
+
+async def iter_file(rel_path: str, chunk_size: int = 256 * 1024):
+    """Потоковая выдача файла по частям — не держим большой файл в памяти."""
+    if is_s3():
+        obj = await asyncio.to_thread(
+            _client().get_object, Bucket=settings.s3_bucket, Key=rel_path
+        )
+        body = obj["Body"]
+        try:
+            while True:
+                data = await asyncio.to_thread(body.read, chunk_size)
+                if not data:
+                    break
+                yield data
+        finally:
+            await asyncio.to_thread(body.close)
+    else:
+        path = local_full(rel_path)
+        with open(path, "rb") as f:
+            while True:
+                data = await asyncio.to_thread(f.read, chunk_size)
+                if not data:
+                    break
+                yield data
 
 
 async def file_exists(rel_path: str) -> bool:

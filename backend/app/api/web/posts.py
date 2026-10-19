@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -11,7 +11,7 @@ from ...db import get_session
 from ...deps import get_current_user
 from ...integrations.base import AdapterError
 from ...models import MediaFile, Post, PostAttachment, PostTarget, PostText, PublicationLog, SocialPage, User
-from ...schemas import PostIn, PostOut, PostTargetOut, parse_publication_date
+from ...schemas import PostIn, PostOut, PostTargetOut, local_day_bounds_utc, parse_publication_date
 from ...services import publish as publish_service
 from ...util import utcnow
 
@@ -90,10 +90,11 @@ async def list_posts(status: str | None = None, source_id: int | None = None,
     if schedule_id:
         conds.append(Post.schedule_id == schedule_id)
     if date_from:
-        conds.append(Post.publication_date >= parse_publication_date(date_from))
+        start, _ = local_day_bounds_utc(date_from, user.timezone)
+        conds.append(Post.publication_date >= start)
     if date_to:
-        d = parse_publication_date(date_to)
-        conds.append(Post.publication_date < d + timedelta(days=1))
+        _, end = local_day_bounds_utc(date_to, user.timezone)
+        conds.append(Post.publication_date < end)
     if source_id:
         t_q = select(PostTarget.post_id).where(PostTarget.source_id == source_id)
         ids = (await s.execute(t_q)).scalars().all()
