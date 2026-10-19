@@ -210,7 +210,8 @@ def _fake_upload_client(monkeypatch, upload_payload, save_responses, captured):
     """
     import httpx as _httpx
 
-    state = {"save": 0}
+    state = {"save": 0, "upload": 0}
+    uploads = upload_payload if isinstance(upload_payload, list) else [upload_payload]
 
     class FakeClient:
         def __init__(self, *a, **kw):
@@ -231,7 +232,9 @@ def _fake_upload_client(monkeypatch, upload_payload, save_responses, captured):
             if "upload.php" in url:
                 captured["files"] = kw.get("files")
                 captured["upload_url"] = url
-                return _RawResp(upload_payload)
+                idx = min(state["upload"], len(uploads) - 1)
+                state["upload"] += 1
+                return _RawResp(uploads[idx])
             if "saveWallPhoto" in url:
                 idx = min(state["save"], len(save_responses) - 1)
                 state["save"] += 1
@@ -394,3 +397,17 @@ def test_upload_filename_is_ascii():
     assert upload_filename(SimpleNamespace(name="", type="photo"), "photo.jpg") == "photo.jpg"
     assert upload_filename(SimpleNamespace(name="ролик.mp4", type="video"), "video.mp4") \
         == "video.mp4"
+
+
+async def test_photo_upload_retries_on_transient_failure(account, monkeypatch):
+    """Временная ошибка загрузки (прокси рвёт соединение) — повторяем попытку."""
+    out, captured = await _publish_with_photo(
+        monkeypatch,
+        [{"error": {"error_msg": "502 Bad Gateway"}},
+         {"server": 856312, "photo": BLOB, "hash": "abc123"}],
+        [{"response": [{"id": 456, "owner_id": -987}]}],
+    )
+
+    assert out.ok
+    wall = next(c for u, c in captured["calls"] if "wall.post" in u)
+    assert wall["attachments"] == "photo-987_456"

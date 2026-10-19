@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { api } from '../lib/api'
+import { api, getToken } from '../lib/api'
 import { useUserTz, zonedParts } from '../lib/tz'
 import { Account, MediaFile, Post, Project, Schedule, SourceInfo, sourceColor, sourceName } from '../lib/types'
 
@@ -356,7 +356,9 @@ export default function PostEditor({ sources, accounts }: Props) {
             <div className="media-thumbs">
               {[...media, ...docs].map((m) => (
                 <div key={m.id} className="thumb"
-                     style={m.type === 'photo' ? { backgroundImage: `url(/api/web/files/${m.id}/raw)` } : {}}>
+                     style={m.type === 'photo'
+                       ? { backgroundImage: `url(/api/web/files/${m.id}/raw?token=${encodeURIComponent(getToken() ?? '')})` }
+                       : {}}>
                   {m.type !== 'photo' ? (m.type === 'video' ? '🎬' : '📄') + (m.seconds ? ` ${m.seconds}с` : '') : ''}
                   <div className="x" onClick={() => {
                     setMedia((x) => x.filter((i) => i.id !== m.id))

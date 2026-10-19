@@ -47,6 +47,30 @@ async def get_current_user(
     return user
 
 
+async def get_user_or_token(
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
+    s: AsyncSession = Depends(get_session),
+) -> User:
+    """Пользователь по заголовку Authorization ИЛИ по query-параметру ?token=.
+
+    Нужен там, где браузер сам не может добавить заголовок: <img src>,
+    background-image, скачивание файла. Заголовок имеет приоритет.
+    """
+    raw = creds.credentials if creds is not None else ""
+    raw = raw or request.query_params.get("token", "")
+    user_id = decode_access_token(raw.strip())
+    if user_id is None:
+        raise HTTPException(401, "Требуется авторизация")
+    identity = await s.get(User, user_id)
+    if identity is None:
+        raise HTTPException(401, "Пользователь не найден")
+    user, role = await _acting_user(identity, s)
+    request.state.role = role
+    request.state.identity = identity
+    return user
+
+
 async def get_actor(request: Request, s: AsyncSession) -> tuple[User, str]:
     """Действующий пользователь и роль для сценариев без заголовка Authorization:
     токен принимается либо из заголовка, либо из query-параметра ?token=

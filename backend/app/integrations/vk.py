@@ -169,24 +169,38 @@ class VKAdapter(SocialAdapter):
         params = {"access_token": token, "v": V}
         if group_id:
             params["group_id"] = abs(group_id)
-        r = await client.post(f"{API}/photos.getWallUploadServer", data=params)
-        info = self._unwrap("photos.getWallUploadServer", r)
-        upload_url = info.get("upload_url") if isinstance(info, dict) else info
-        if not isinstance(upload_url, str) or not upload_url:
-            raise AdapterError("VK: не вернулась ссылка на сервер загрузки фото")
         # Имя файла — ASCII с настоящим расширением: ВК определяет тип файла по
         # имени, а кириллица в multipart-имени ломает разбор формы на стороне ВК.
         filename = upload_filename(media, "photo.jpg")
         ctype = mimetypes.guess_type(filename)[0] or "image/jpeg"
-        up = await client.post(upload_url, files={
-            "photo": (filename, await read_media_bytes(media), ctype)})
-        payload = self._upload_payload("фото", up)
+        content = await read_media_bytes(media)
+
+        # Загрузка идёт через отдельный сервер ВК, у которого через прокси
+        # периодически рвётся соединение (502) — одна повторная попытка с
+        # новой ссылкой на загрузку (старая одноразовая).
+        payload = None
+        upload_error: AdapterError | None = None
+        for attempt in range(2):
+            try:
+                r = await client.post(f"{API}/photos.getWallUploadServer", data=params)
+                info = self._unwrap("photos.getWallUploadServer", r)
+                upload_url = info.get("upload_url") if isinstance(info, dict) else info
+                if not isinstance(upload_url, str) or not upload_url:
+                    raise AdapterError("VK: не вернулась ссылка на сервер загрузки фото")
+                up = await client.post(upload_url, files={
+                    "photo": (filename, content, ctype)})
+                payload = self._upload_payload("фото", up)
+                break
+            except AdapterError as e:
+                upload_error = e
+        if payload is None:
+            raise upload_error or AdapterError("VK: не удалось загрузить фото")
 
         # Сохраняем фото на стене: сначала новый формат (JSON с данными фото),
         # затем — идентификатор из него, если ВК новый формат не принял.
         variants = [payload["photo"]] + self._photo_variants(payload.get("photo", ""))
         items = None
-        last_error: AdapterError | None = None
+        save_error: AdapterError | None = None
         for photo_value in variants:
             saved = await client.post(f"{API}/photos.saveWallPhoto", data={
                 **params, **payload, "photo": photo_value})
@@ -194,9 +208,9 @@ class VKAdapter(SocialAdapter):
                 items = self._unwrap("photos.saveWallPhoto", saved)
                 break
             except AdapterError as e:
-                last_error = e
+                save_error = e
         if items is None:
-            raise last_error or AdapterError("VK photos.saveWallPhoto: не удалось сохранить фото")
+            raise save_error or AdapterError("VK photos.saveWallPhoto: не удалось сохранить фото")
 
         it = self._first_item(items)
         photo_id = it.get("id")

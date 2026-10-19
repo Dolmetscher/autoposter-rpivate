@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db import get_session
-from ...deps import get_current_user
+from ...deps import get_current_user, get_user_or_token
 from ...models import MediaFile, User
 from ...schemas import MediaOut
 from ...services import files as files_service
@@ -131,8 +131,11 @@ async def transcode_file(file_id: str, payload: TranscodeIn,
 
 
 @router.get("/{file_id}/raw")
-async def raw_file(file_id: str, user: User = Depends(get_current_user),
+async def raw_file(file_id: str, user: User = Depends(get_user_or_token),
                    s: AsyncSession = Depends(get_session)):
+    """Файл для превью. Токен принимается и в заголовке Authorization, и в
+    query-параметре ?token= — браузер в <img>/background-image не умеет слать
+    заголовок, и без этого превью отдавало 401."""
     mf = await s.get(MediaFile, file_id)
     if not mf or mf.user_id != user.id:
         raise HTTPException(404, "Файл не найден")
