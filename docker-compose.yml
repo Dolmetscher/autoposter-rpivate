@@ -13,7 +13,7 @@ services:
       # Настройки прокси для обхода блокировок Meta и Twitter:
       HTTP_PROXY: "http://dmyD5d:R6Xu5s@168.81.66.247:8000"
       HTTPS_PROXY: "http://dmyD5d:R6Xu5s@168.81.66.247:8000"
-      NO_PROXY: "localhost,127.0.0.1"
+      NO_PROXY: "localhost,127.0.0.1,api.vk.com,vk.com,userapi.com,api.ok.ru,ok.ru,okcdn.ru"
       # предохранители слабого сервера
       MAX_MEDIA_SIZE_MB: ${MAX_MEDIA_SIZE_MB:-20}
       CROSSPOST_MAX_MEDIA_MB: ${CROSSPOST_MAX_MEDIA_MB:-15}
