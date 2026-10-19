@@ -11,6 +11,7 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
   const [total, setTotal] = useState(0)
   const [selected, setSelected] = useState<number[]>([])
   const [myRole, setMyRole] = useState('owner')
+  const [error, setError] = useState('')
   const tz = useUserTz()
 
   const location = useLocation()
@@ -18,13 +19,21 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
   const load = async () => {
     const params = new URLSearchParams({ page: String(page) })
     if (filter) params.set('status', filter)
-    const d = await api.get<{ list: Post[]; total_rows: number }>(
-      `/api/web/posts?${params}`)
-    setPosts(d.list)
-    setTotal(d.total_rows)
+    try {
+      const d = await api.get<{ list: Post[]; total_rows: number }>(
+        `/api/web/posts?${params}`)
+      setPosts(d.list)
+      setTotal(d.total_rows)
+      setError('')
+    } catch (e) {
+      // показываем ошибку, а не пустой список — иначе «постов нет» вводит в заблуждение
+      setPosts([])
+      setTotal(0)
+      setError(e instanceof Error ? e.message : 'Не удалось загрузить посты')
+    }
   }
   useEffect(() => {
-    load().catch(() => {})
+    load()
     api.get<{ role: string }>('/api/web/team/my-role').then((r) => setMyRole(r.role)).catch(() => {})
   }, [page, filter, location.pathname])
 
@@ -151,7 +160,8 @@ export default function Posts({ sources }: { sources: SourceInfo[] }) {
             })}
           </tbody>
         </table>
-        {posts.length === 0 && <div className="empty">Постов нет</div>}
+        {error && <div className="empty" style={{ color: 'var(--danger)' }}>Ошибка загрузки: {error}</div>}
+        {!error && posts.length === 0 && <div className="empty">Постов нет</div>}
       </div>
 
       {pages > 1 && (

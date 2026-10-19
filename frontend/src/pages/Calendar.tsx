@@ -20,6 +20,7 @@ export default function Calendar() {
   // от таймзоны, а Date привязан к часовому поясу браузера
   const [cursor, setCursor] = useState<{ y: number; m: number } | null>(null)
   const [posts, setPosts] = useState<Post[]>([])
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (cursor || !tz) return
@@ -36,8 +37,12 @@ export default function Calendar() {
     const daysInMonth = new Date(Date.UTC(cursor.y, cursor.m + 1, 0)).getUTCDate()
     const to = `${cursor.y}-${pad(cursor.m + 1)}-${pad(daysInMonth)}`
     api.get<{ list: Post[] }>(`/api/web/posts?date_from=${from}&date_to=${to}&limit=100`)
-      .then((d) => setPosts(d.list))
-      .catch(() => {})
+      .then((d) => { setPosts(d.list); setError('') })
+      .catch((e) => {
+        // не показываем пустой календарь при ошибке — это выглядит как «пусто»
+        setPosts([])
+        setError(e instanceof Error ? e.message : 'Не удалось загрузить календарь')
+      })
   }, [cursor])
 
   if (!cursor) return <div className="empty">Загрузка…</div>
@@ -70,6 +75,9 @@ export default function Calendar() {
 
   return (
     <>
+      {error && <div className="panel" style={{ marginBottom: 14, color: 'var(--danger)' }}>
+        Ошибка загрузки календаря: {error}
+      </div>}
       <div className="between">
         <div>
           <h1>Календарь публикаций</h1>

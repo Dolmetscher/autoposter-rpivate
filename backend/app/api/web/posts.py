@@ -10,7 +10,8 @@ from ...config import settings
 from ...db import get_session
 from ...deps import get_current_user
 from ...integrations.base import AdapterError
-from ...models import MediaFile, Post, PostAttachment, PostTarget, PostText, PublicationLog, SocialPage, User
+from ...models import (MediaFile, Post, PostAttachment, PostTarget, PostText, Project,
+                      PublicationLog, Schedule, SocialPage, User)
 from ...schemas import PostIn, PostOut, PostTargetOut, local_day_bounds_utc, parse_publication_date
 from ...services import publish as publish_service
 from ...util import utcnow
@@ -38,15 +39,18 @@ def _can_publish(post: Post, role: str) -> bool:
 
 
 def post_to_out(post: Post, full: bool = False) -> dict:
+    # media_file/page могут отсутствовать: файл или страницу удалили, а в SQLite
+    # внешние ключи по умолчанию не проверяются — не роняем весь список постов
+    attachments = sorted(post.attachments, key=lambda x: x.position)
     texts = [{"source_id": t.source_id, "text": t.text} for t in post.texts]
-    media_ids = [a.media_file_id for a in sorted(post.attachments, key=lambda x: x.position)
-                 if a.media_file.type in ("photo", "video")]
-    doc_ids = [a.media_file_id for a in sorted(post.attachments, key=lambda x: x.position)
-               if a.media_file.type == "document"]
+    media_ids = [a.media_file_id for a in attachments
+                 if a.media_file is not None and a.media_file.type in ("photo", "video")]
+    doc_ids = [a.media_file_id for a in attachments
+               if a.media_file is not None and a.media_file.type == "document"]
     targets = []
     for t in post.targets:
         d = PostTargetOut.model_validate(t).model_dump()
-        d["page_name"] = t.page.social_page_name
+        d["page_name"] = t.page.social_page_name if t.page is not None else ""
         targets.append(d)
     return {
         "id": post.id, "status": post.status,
@@ -186,6 +190,18 @@ async def update_post(post_id: int, payload: PostIn, request: Request,
 
     try:
         pub_date = parse_publication_date(payload.publication_date, tz_name=user.timezone) if payload.publication_date else None
+        # проект и расписание должны существовать и принадлежать пользователю:
+        # с включёнными внешними ключами чужой id дал бы 500 вместо 400
+        if payload.project_id is not None:
+            proj = (await s.execute(select(Project).where(
+                Project.id == payload.project_id, Project.user_id == user.id))).scalar_one_or_none()
+            if not proj:
+                raise HTTPException(400, f"Проект {payload.project_id} не найден")
+        if payload.schedule_id is not None:
+            sched = (await s.execute(select(Schedule).where(
+                Schedule.id == payload.schedule_id, Schedule.user_id == user.id))).scalar_one_or_none()
+            if not sched:
+                raise HTTPException(400, f"Расписание {payload.schedule_id} не найдено")
         post.publication_when_type = payload.publication_when_type
         post.settings = payload.settings
         post.project_id = payload.project_id

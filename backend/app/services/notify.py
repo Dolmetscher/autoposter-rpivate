@@ -58,15 +58,21 @@ async def notify_publish_result(s: AsyncSession, post: Post) -> None:
     if failed and cfg.get("on_error", True):
         lines = [f"⚠️ Пост #{post.id}: ошибки публикации"]
         for t in failed[:5]:
-            lines.append(f"• {t.page.social_page_name}: {t.error[:150]}")
+            lines.append(f"• {_page_name(t)}: {t.error[:150]}")
         if ok:
             lines.append(f"Успешно: {len(ok)}")
         sent, err = await send(bot_token, chat_id, "\n".join(lines))
         if not sent:
             log.warning("notify failed: %s", err)
     elif ok and not failed and cfg.get("on_success"):
-        pages = ", ".join(t.page.social_page_name for t in ok[:5])
+        pages = ", ".join(_page_name(t) for t in ok[:5])
         await send(bot_token, chat_id, f"✅ Пост #{post.id} опубликован: {pages}")
+
+
+def _page_name(target) -> str:
+    """Имя страницы цели; страницу могли удалить — тогда вернём заглушку."""
+    page = getattr(target, "page", None)
+    return page.social_page_name if page is not None else "удалённая страница"
 
 
 async def notify_custom(s: AsyncSession, user_id: int, text: str) -> None:

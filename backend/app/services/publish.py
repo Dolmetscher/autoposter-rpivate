@@ -63,6 +63,15 @@ async def create_post(
         # Объединяем с явно выбранными страницами
         page_ids = list({*page_ids, *project_page_ids})
 
+    # Расписание тоже проверяем: с включёнными внешними ключами несуществующий
+    # schedule_id дал бы ошибку целостности (500) вместо понятного 400
+    if schedule_id is not None:
+        sched = (await s.execute(
+            select(Schedule).where(Schedule.id == schedule_id, Schedule.user_id == user.id)
+        )).scalar_one_or_none()
+        if sched is None:
+            raise ValueError(f"Schedule with id {schedule_id} not found")
+
     post = Post(
         user_id=user.id,
         publication_when_type=when_type,
@@ -154,6 +163,15 @@ async def publish_target(s: AsyncSession, post: Post, target: PostTarget) -> Non
     if page is None:
         page = await s.get(SocialPage, target.page_id)
         target.page = page
+    if page is None:
+        # страницу удалили (аккаунт отключили) — это ошибка цели, а не падение
+        # всего тика планировщика
+        target.status = "failed"
+        target.error = "Страница удалена"
+        add_log(s, post.user_id, "Публикация пропущена: страница удалена",
+                "error", post_id=post.id, target_id=target.id, source_id=target.source_id)
+        await s.flush()
+        return
     # s.get берёт объект из identity map — ленивой загрузки нет
     page.account = await s.get(SocialAccount, page.account_id)
     adapter = get_adapter(target.source_id)
@@ -316,19 +334,31 @@ async def process_deletes(s: AsyncSession, now=None) -> int:
     )).scalars().all()
     count = 0
     for target in targets:
-        target.page.account = await s.get(SocialAccount, target.page.account_id)
+        page = target.page
+        if page is None:
+            page = await s.get(SocialPage, target.page_id)
+        if page is None:
+            # страницу удалили — удалять из неё уже нечего
+            target.status = "deleted"
+            add_log(s, target.post.user_id,
+                    "Автоудаление пропущено: страница удалена",
+                    "info", post_id=target.post_id, target_id=target.id)
+            count += 1
+            continue
+        target.page = page
+        page.account = await s.get(SocialAccount, page.account_id)
         adapter = get_adapter(target.source_id)
         try:
-            ok = await adapter.delete(target.page, target.external_id)
+            ok = await adapter.delete(page, target.external_id)
         except AdapterError as e:
             ok = False
             add_log(s, target.post.user_id,
-                    f"Автоудаление не удалось ({target.page.social_page_name}): {e}",
+                    f"Автоудаление не удалось ({page.social_page_name}): {e}",
                     "error", post_id=target.post_id, target_id=target.id)
         if ok:
             target.status = "deleted"
             add_log(s, target.post.user_id,
-                    f"Пост удалён по таймеру из «{target.page.social_page_name}»",
+                    f"Пост удалён по таймеру из «{page.social_page_name}»",
                     "info", post_id=target.post_id, target_id=target.id)
             count += 1
     if count:

@@ -63,6 +63,9 @@ async def update_stats(s: AsyncSession, now: datetime | None = None) -> int:
         )).scalar_one_or_none()
         if last and now - last < timedelta(minutes=STATS_INTERVAL_MIN):
             continue
+        if target.page is None:
+            # страницу удалили — метрики собрать уже не для чего
+            continue
         target.page.account = await s.get(SocialAccount, target.page.account_id)
         try:
             stats = await get_adapter(target.source_id).fetch_stats(target.page, target.external_id)
