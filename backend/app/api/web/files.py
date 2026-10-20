@@ -130,7 +130,9 @@ async def transcode_file(file_id: str, payload: TranscodeIn,
     return files_service.media_out(new)
 
 
-@router.get("/{file_id}/raw")
+# Публичный endpoint для превью: токен в ?token= или в заголовке Authorization.
+# НЕ декорируем @router.get, чтобы не попасть под guard_role.
+# Регистрируется в app/api/__init__.py отдельно.
 async def raw_file(file_id: str, user: User = Depends(get_user_or_token),
                    s: AsyncSession = Depends(get_session)):
     """Файл для превью. Токен принимается и в заголовке Authorization, и в

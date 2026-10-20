@@ -20,6 +20,13 @@ auth_router.include_router(auth.router)
 oauth_router = APIRouter()
 oauth_router.include_router(oauth.router)
 
+# без guard: публичное превью файлов (токен в ?token= для <img src>).
+# raw_file не декорируется в files.py, иначе он попал бы под guard_role,
+# который требует заголовок Authorization и отдавал бы 401 до проверки ?token=.
+public_router = APIRouter()
+public_router.add_api_route(
+    "/files/{file_id}/raw", files.raw_file, methods=["GET"], name="raw_file")
+
 # под guard: роли viewer/editor/admin ограничивают мутации
 guarded = APIRouter(dependencies=[Depends(guard_role)])
 for r in (accounts.router, sources.router, files.router, posts.router,
@@ -30,6 +37,7 @@ for r in (accounts.router, sources.router, files.router, posts.router,
 
 api_router.include_router(auth_router, prefix="/api/web")
 api_router.include_router(oauth_router, prefix="/api/web")
+api_router.include_router(public_router, prefix="/api/web")
 api_router.include_router(guarded, prefix="/api/web")
 api_router.include_router(hooppy.router, prefix="/api")
 api_router.include_router(yookassa.router, prefix="/api")
