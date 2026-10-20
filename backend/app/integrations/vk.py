@@ -24,9 +24,12 @@ class VKAdapter(SocialAdapter):
     # ---------- служебные ----------
     async def call(self, method: str, token: str, **params):
         params = {k: v for k, v in params.items() if v is not None}
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(f"{API}/{method}",
-                                  data={**params, "access_token": token, "v": V})
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.post(f"{API}/{method}",
+                                      data={**params, "access_token": token, "v": V})
+        except httpx.HTTPError as e:
+            raise AdapterError(f"VK {method}: сетевая ошибка {e.__class__.__name__}") from e
         return self._unwrap(method, r)
 
     @staticmethod
@@ -115,7 +118,7 @@ class VKAdapter(SocialAdapter):
         except Exception as e:  # noqa: BLE001 — ответ мог прийти не-JSON (прокси, заглушка)
             raise AdapterError(f"VK: сервер загрузки {kind} вернул не-JSON ответ: {e}")
         if not isinstance(data, dict):
-            raise AdapterError(f"VK: неожиданный ответ сервера загрузки {kind}: {data!r}")
+            raise AdapterError(f"VK: неожидаемый ответ сервера загрузки {kind}: {data!r}")
         err = data.get("error")
         if err:
             msg = err.get("error_msg", "ошибка") if isinstance(err, dict) else str(err)
@@ -132,6 +135,10 @@ class VKAdapter(SocialAdapter):
 
         ВК принимает либо JSON-строку с данными загруженных фото (новый формат
         сервера загрузки), либо идентификатор фото из этого JSON (старый формат).
+        Важно: идентификатор в современном формате содержит суффикс через
+        двоеточие («6f26a6640b:w») — это часть идентификатора, отрезать её
+        нельзя. Усечённое значение оставляем только последним запасным
+        вариантом на случай старых ответов сервера.
         """
         out: list[str] = []
         if not photo:
@@ -146,7 +153,10 @@ class VKAdapter(SocialAdapter):
             if not isinstance(it, dict):
                 continue
             if it.get("photo"):
-                out.append(str(it["photo"]).split(":")[0])
+                full = str(it["photo"])
+                out.append(full)                      # полный идентификатор («6f26a6640b:w»)
+                if ":" in full:
+                    out.append(full.split(":")[0])    # усечённый — запасной вариант
             if it.get("kid"):
                 out.append(str(it["kid"]))
         return out
@@ -175,12 +185,13 @@ class VKAdapter(SocialAdapter):
         ctype = mimetypes.guess_type(filename)[0] or "image/jpeg"
         content = await read_media_bytes(media)
 
-        # Загрузка идёт через отдельный сервер ВК, у которого через прокси
-        # периодически рвётся соединение (502) — одна повторная попытка с
-        # новой ссылкой на загрузку (старая одноразовая).
+        # Загрузка идёт через отдельный сервер ВК, у которого периодически
+        # рвётся соединение (502, обрывы, таймауты) — до трёх попыток, каждая
+        # с новой ссылкой на загрузку (старая одноразовая). Важно ловить не
+        # только ошибки VK (AdapterError), но и сетевые сбои httpx.
         payload = None
         upload_error: AdapterError | None = None
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 r = await client.post(f"{API}/photos.getWallUploadServer", data=params)
                 info = self._unwrap("photos.getWallUploadServer", r)
@@ -193,17 +204,28 @@ class VKAdapter(SocialAdapter):
                 break
             except AdapterError as e:
                 upload_error = e
+            except httpx.HTTPError as e:
+                upload_error = AdapterError(
+                    f"VK: сетевая ошибка при загрузке фото ({e.__class__.__name__})")
         if payload is None:
             raise upload_error or AdapterError("VK: не удалось загрузить фото")
 
         # Сохраняем фото на стене: сначала новый формат (JSON с данными фото),
-        # затем — идентификатор из него, если ВК новый формат не принял.
-        variants = [payload["photo"]] + self._photo_variants(payload.get("photo", ""))
+        # затем — запасные идентификаторы из него, если ВК JSON не принял.
+        variants: list[str] = []
+        for v in [payload["photo"]] + self._photo_variants(payload.get("photo", "")):
+            if v and v not in variants:
+                variants.append(v)
         items = None
         save_error: AdapterError | None = None
         for photo_value in variants:
-            saved = await client.post(f"{API}/photos.saveWallPhoto", data={
-                **params, **payload, "photo": photo_value})
+            try:
+                saved = await client.post(f"{API}/photos.saveWallPhoto", data={
+                    **params, **payload, "photo": photo_value})
+            except httpx.HTTPError as e:
+                save_error = AdapterError(
+                    f"VK: сетевая ошибка при сохранении фото ({e.__class__.__name__})")
+                continue
             try:
                 items = self._unwrap("photos.saveWallPhoto", saved)
                 break
@@ -236,9 +258,13 @@ class VKAdapter(SocialAdapter):
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
         if not isinstance(upload_url, str) or not upload_url:
             raise AdapterError("VK: не вернулась ссылка на сервер загрузки видео")
-        await client.post(upload_url,
-                          files={"video_file": (upload_filename(media, "video.mp4"),
-                                                await read_media_bytes(media))})
+        try:
+            await client.post(upload_url,
+                             files={"video_file": (upload_filename(media, "video.mp4"),
+                                                   await read_media_bytes(media))})
+        except httpx.HTTPError as e:
+            raise AdapterError(
+                f"VK: сетевая ошибка при загрузке видео ({e.__class__.__name__})") from e
         return f"video{info['owner_id']}_{info['video_id']}"
 
     async def _upload_doc(self, client: httpx.AsyncClient, token: str, group_id: int | None,
@@ -252,8 +278,13 @@ class VKAdapter(SocialAdapter):
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
         if not isinstance(upload_url, str) or not upload_url:
             raise AdapterError("VK: не вернулась ссылка на сервер загрузки документа")
-        up = await client.post(upload_url, files={"file": (upload_filename(media, "document"),
-                                                           await read_media_bytes(media))})
+        try:
+            up = await client.post(upload_url,
+                                   files={"file": (upload_filename(media, "document"),
+                                                   await read_media_bytes(media))})
+        except httpx.HTTPError as e:
+            raise AdapterError(
+                f"VK: сетевая ошибка при загрузке документа ({e.__class__.__name__})") from e
         payload = self._upload_payload("документа", up, keys=("file", "title", "tags"),
                                        required="file")
         saved = await client.post(f"{API}/docs.save", data={**params, **payload})
@@ -275,10 +306,16 @@ class VKAdapter(SocialAdapter):
         r = await client.post(f"{API}/{method}", data=params)
         info = self._unwrap(method, r)
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
-        
+        if not isinstance(upload_url, str) or not upload_url:
+            raise AdapterError("VK: не вернулась ссылка на сервер загрузки истории")
         field = "photo" if media.type == "photo" else "video_file"
-        up = await client.post(upload_url, files={field: (upload_filename(media, "media.jpg"),
-                                                           await read_media_bytes(media))})
+        try:
+            up = await client.post(upload_url,
+                                   files={field: (upload_filename(media, "media.jpg"),
+                                                  await read_media_bytes(media))})
+        except httpx.HTTPError as e:
+            raise AdapterError(
+                f"VK истории: сетевая ошибка при загрузке ({e.__class__.__name__})") from e
         try:
             data = up.json()
         except Exception as e:  # noqa: BLE001 — ответ мог прийти не-JSON
@@ -322,48 +359,52 @@ class VKAdapter(SocialAdapter):
         group_id = None if owner > 0 else -owner
         kind = getattr(page, "page_kind", "group")
 
-        async with httpx.AsyncClient(timeout=300) as client:
-            if st.get("publish_as_story"):
-                return await self._post_story(client, token, page, content)
+        try:
+            async with httpx.AsyncClient(timeout=300) as client:
+                if st.get("publish_as_story"):
+                    return await self._post_story(client, token, page, content)
 
-            attachments: list[str] = []
-            for media in content.media:
-                if st.get("publish_as_clips") and media.type == "video":
-                    att = await self._upload_video(client, token, group_id, media)
-                    if not st.get("share_clips_to_feed"):
-                        info = att.replace("video", "", 1)
-                        return PublishOutcome(True, external_id=info,
-                                              external_url=f"https://vk.com/clips{info}")
-                    attachments.append(att)
-                elif media.type == "photo":
-                    attachments.append(await self._upload_photo(client, token, group_id, media))
-                elif media.type == "video":
-                    attachments.append(await self._upload_video(client, token, group_id, media))
-            for doc in content.documents:
-                attachments.append(await self._upload_doc(client, token, group_id, doc))
+                attachments: list[str] = []
+                for media in content.media:
+                    if st.get("publish_as_clips") and media.type == "video":
+                        att = await self._upload_video(client, token, group_id, media)
+                        if not st.get("share_clips_to_feed"):
+                            info = att.replace("video", "", 1)
+                            return PublishOutcome(True, external_id=info,
+                                                  external_url=f"https://vk.com/clips{info}")
+                        attachments.append(att)
+                    elif media.type == "photo":
+                        attachments.append(await self._upload_photo(client, token, group_id, media))
+                    elif media.type == "video":
+                        attachments.append(await self._upload_video(client, token, group_id, media))
+                for doc in content.documents:
+                    attachments.append(await self._upload_doc(client, token, group_id, doc))
 
-            # Ссылку в ВК добавляем прямо в attachments: отдельного метода API
-            # для вложения-ссылки нет, а VK сам разворачивает из URL превью.
-            link = (st.get("link") or "").strip()
-            if link:
-                attachments.append(link)
-            message = (content.text or "").strip()
+                # Ссылку в ВК добавляем прямо в attachments: отдельного метода API
+                # для вложения-ссылки нет, а VK сам разворачивает из URL превью.
+                link = (st.get("link") or "").strip()
+                if link:
+                    attachments.append(link)
+                message = (content.text or "").strip()
 
-            if not message and not attachments:
-                raise AdapterError("VK: пустой пост (нет текста и вложений)")
+                if not message and not attachments:
+                    raise AdapterError("VK: пустой пост (нет текста и вложений)")
 
-            r = await client.post(f"{API}/wall.post", data={
-                "access_token": token, "v": V, "owner_id": owner,
-                "from_group": 1 if kind != "user" else 0,
-                "message": message[:4096],
-                "attachments": ",".join(attachments),
-            })
-            resp = self._unwrap("wall.post", r)
-            post_id = resp["post_id"]
-            if st.get("pin_post"):
-                await self.call("wall.pin", token, owner_id=owner, post_id=post_id)
-            return PublishOutcome(True, external_id=f"{owner}_{post_id}",
-                                  external_url=f"https://vk.com/wall{owner}_{post_id}")
+                r = await client.post(f"{API}/wall.post", data={
+                    "access_token": token, "v": V, "owner_id": owner,
+                    "from_group": 1 if kind != "user" else 0,
+                    "message": message[:4096],
+                    "attachments": ",".join(attachments),
+                })
+                resp = self._unwrap("wall.post", r)
+                post_id = resp["post_id"]
+                if st.get("pin_post"):
+                    await self.call("wall.pin", token, owner_id=owner, post_id=post_id)
+                return PublishOutcome(True, external_id=f"{owner}_{post_id}",
+                                      external_url=f"https://vk.com/wall{owner}_{post_id}")
+        except httpx.HTTPError as e:
+            raise AdapterError(
+                f"VK: сетевая ошибка при публикации ({e.__class__.__name__})") from e
 
     async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
         token = page.account.credentials.get("access_token")
