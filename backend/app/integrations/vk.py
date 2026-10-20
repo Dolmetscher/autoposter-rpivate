@@ -1,4 +1,4 @@
-"""ВКонтакте: публикация в сообщество по ключу доступа сообщества (community token) —
+"""ВКонтакте: публикация в сообщество по ключу доступа (User Token или Community Token) —
 посты на стене, фото, видео/клипы, истории, пин, автоудаление, источники кросспостинга."""
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class VKAdapter(SocialAdapter):
     source_id = 1
     name = "ВКонтакте"
     capabilities = ("post", "photo", "video", "story", "clip", "channel")
-    handles_link = True  # ссылка публикуется вложением links.add
+    handles_link = True
 
     # ---------- служебные ----------
     async def call(self, method: str, token: str, **params):
@@ -42,10 +42,10 @@ class VKAdapter(SocialAdapter):
     # ---------- подключение ----------
     def connect_requires(self) -> list[dict]:
         return [
-            {"name": "access_token", "label": "Ключ доступа сообщества (токен группы)",
+            {"name": "access_token", "label": "Ключ доступа (токен пользователя или группы)",
              "required": True},
             {"name": "group_ref",
-             "label": "Ссылка на группу или её ID (можно не заполнять — определим сами)",
+             "label": "Ссылка на группу или её ID (необязательно при использовании токена пользователя)",
              "required": False},
             {"name": "name", "label": "Название аккаунта в списке (необязательно)",
              "required": False},
@@ -77,45 +77,51 @@ class VKAdapter(SocialAdapter):
         creds = account.credentials
         token = creds.get("access_token")
         if not token:
-            raise AdapterError("VK: не указан ключ доступа сообщества (токен)")
+            raise AdapterError("VK: не указан токен доступа")
 
         ref = self._normalize_group_ref(
             (extra or {}).get("group_ref") or creds.get("group_ref") or "")
+
+        # 1. Если явно указали ссылку/ID группы
         if ref:
             group = self._first_group(await self.call(
                 "groups.getById", token, group_id=ref, fields="photo_100"))
-        else:
-            try:
-                group = self._first_group(await self.call(
-                    "groups.getById", token, fields="photo_100"))
-            except AdapterError as e:
-                raise AdapterError(
-                    "VK: не удалось определить сообщество по токену — укажите "
-                    "ссылку на группу или её ID при подключении") from e
+            name_override = creds.get("name") or (extra or {}).get("name")
+            return [PageInfo(str(group["id"]),
+                             (name_override or group.get("name") or "Сообщество ВК").strip(),
+                             group.get("photo_100", ""), kind="group")]
 
-        name_override = creds.get("name") or (extra or {}).get("name")
-        return [PageInfo(str(group["id"]),
-                         (name_override or group.get("name") or "Сообщество ВК").strip(),
-                         group.get("photo_100", ""), kind="group")]
+        # 2. Если токен пользователя — подтягиваем пользователя и группы
+        try:
+            user_data = await self.call("users.get", token, fields="photo_100")
+            if user_data:
+                u = user_data[0]
+                user_page = PageInfo(str(u["id"]), f"{u.get('first_name', '')} {u.get('last_name', '')}".strip(),
+                                     u.get("photo_100", ""), kind="user")
+                admin_groups = await self.call("groups.get", token, filter="admin,editor", extended=1, fields="photo_100")
+                items = admin_groups.get("items", []) if isinstance(admin_groups, dict) else []
+                pages = [user_page]
+                for g in items:
+                    pages.append(PageInfo(str(g["id"]), g.get("name", "Группа").strip(), g.get("photo_100", ""), kind="group"))
+                return pages
+        except Exception:
+            pass
+
+        # 3. Резервный вариант для токена сообщества
+        try:
+            group = self._first_group(await self.call("groups.getById", token, fields="photo_100"))
+            return [PageInfo(str(group["id"]), group.get("name", "Сообщество ВК").strip(),
+                             group.get("photo_100", ""), kind="group")]
+        except AdapterError as e:
+            raise AdapterError("VK: не удалось определить сообщество — укажите ID группы или используйте токен пользователя") from e
 
     # ---------- публикация ----------
     @staticmethod
     def _upload_payload(kind: str, up, keys: tuple[str, ...] = ("server", "photo", "hash"),
                         required: str = "photo") -> dict:
-        """Параметры сохранения из ответа сервера загрузки (server/photo/hash).
-
-        Ответ сервера загрузки бывает двух видов:
-        * классический — {"server": 123, "photo": "c141990203", "hash": "..."};
-        * современный — {"server": 123, "photo": "[{...json с данными фото...}]", "hash": "..."}.
-
-        Если файл не принят, VK отвечает HTTP 200, но с пустым photo (или с
-        объектом error). Раньше такой ответ молча уходил в photos.saveWallPhoto
-        без параметра photo, и пользователь видел невнятное «photo is undefined»
-        вместо настоящей причины.
-        """
         try:
             data = up.json()
-        except Exception as e:  # noqa: BLE001 — ответ мог прийти не-JSON (прокси, заглушка)
+        except Exception as e:
             raise AdapterError(f"VK: сервер загрузки {kind} вернул не-JSON ответ: {e}")
         if not isinstance(data, dict):
             raise AdapterError(f"VK: неожидаемый ответ сервера загрузки {kind}: {data!r}")
@@ -131,15 +137,6 @@ class VKAdapter(SocialAdapter):
 
     @staticmethod
     def _photo_variants(photo: str) -> list[str]:
-        """Альтернативные значения параметра photo для photos.saveWallPhoto.
-
-        ВК принимает либо JSON-строку с данными загруженных фото (новый формат
-        сервера загрузки), либо идентификатор фото из этого JSON (старый формат).
-        Важно: идентификатор в современном формате содержит суффикс через
-        двоеточие («6f26a6640b:w») — это часть идентификатора, отрезать её
-        нельзя. Усечённое значение оставляем только последним запасным
-        вариантом на случай старых ответов сервера.
-        """
         out: list[str] = []
         if not photo:
             return out
@@ -154,16 +151,15 @@ class VKAdapter(SocialAdapter):
                 continue
             if it.get("photo"):
                 full = str(it["photo"])
-                out.append(full)                      # полный идентификатор («6f26a6640b:w»)
+                out.append(full)
                 if ":" in full:
-                    out.append(full.split(":")[0])    # усечённый — запасной вариант
+                    out.append(full.split(":")[0])
             if it.get("kid"):
                 out.append(str(it["kid"]))
         return out
 
     @staticmethod
     def _first_item(items) -> dict:  # noqa: ANN001
-        """Первый объект из ответа VK (список, либо объект с items/photo/doc)."""
         if isinstance(items, dict):
             items = items.get("items") or items.get("photo") or items.get("doc") or [items]
         if isinstance(items, list):
@@ -179,16 +175,10 @@ class VKAdapter(SocialAdapter):
         params = {"access_token": token, "v": V}
         if group_id:
             params["group_id"] = abs(group_id)
-        # Имя файла — ASCII с настоящим расширением: ВК определяет тип файла по
-        # имени, а кириллица в multipart-имени ломает разбор формы на стороне ВК.
         filename = upload_filename(media, "photo.jpg")
         ctype = mimetypes.guess_type(filename)[0] or "image/jpeg"
         content = await read_media_bytes(media)
 
-        # Загрузка идёт через отдельный сервер ВК, у которого периодически
-        # рвётся соединение (502, обрывы, таймауты) — до трёх попыток, каждая
-        # с новой ссылкой на загрузку (старая одноразовая). Важно ловить не
-        # только ошибки VK (AdapterError), но и сетевые сбои httpx.
         payload = None
         upload_error: AdapterError | None = None
         for attempt in range(3):
@@ -210,8 +200,6 @@ class VKAdapter(SocialAdapter):
         if payload is None:
             raise upload_error or AdapterError("VK: не удалось загрузить фото")
 
-        # Сохраняем фото на стене: сначала новый формат (JSON с данными фото),
-        # затем — запасные идентификаторы из него, если ВК JSON не принял.
         variants: list[str] = []
         for v in [payload["photo"]] + self._photo_variants(payload.get("photo", "")):
             if v and v not in variants:
@@ -238,7 +226,6 @@ class VKAdapter(SocialAdapter):
         photo_id = it.get("id")
         owner = it.get("owner_id")
         if not photo_id:
-            # ответ без идентификатора — берём его из загруженного фото
             ids = self._photo_variants(payload.get("photo", ""))
             photo_id = ids[0] if ids else ""
             owner = owner if owner is not None else (-group_id if group_id else 0)
@@ -318,7 +305,7 @@ class VKAdapter(SocialAdapter):
                 f"VK истории: сетевая ошибка при загрузке ({e.__class__.__name__})") from e
         try:
             data = up.json()
-        except Exception as e:  # noqa: BLE001 — ответ мог прийти не-JSON
+        except Exception as e:
             raise AdapterError(f"VK истории: сервер загрузки вернул не-JSON ответ: {e}")
         if isinstance(data, dict) and data.get("error"):
             err = data["error"]
@@ -339,13 +326,16 @@ class VKAdapter(SocialAdapter):
     def _unwrap(method: str, r: httpx.Response):
         try:
             data = r.json()
-        except Exception as e:  # noqa: BLE001 — не-JSON ответ (прокси, заглушка, HTML)
+        except Exception as e:
+            print(f"!!! VK {method} RAW NON-JSON RESPONSE: {r.text}", flush=True)
             raise AdapterError(f"VK {method}: сервер вернул не-JSON ответ: {e}")
         if isinstance(data, dict) and "error" in data:
             err = data["error"]
             msg = err.get("error_msg", "ошибка") if isinstance(err, dict) else str(err)
-            raise AdapterError(f"VK {method}: {msg}")
+            print(f"!!! VK ERROR in {method}: code={err.get('error_code')} msg={msg}", flush=True)
+            raise AdapterError(f"VK {method}: [{err.get('error_code')}] {msg}")
         if not isinstance(data, dict) or "response" not in data:
+            print(f"!!! VK {method} UNEXPECTED RESPONSE: {data!r}", flush=True)
             raise AdapterError(f"VK {method}: неожиданный ответ {data!r}")
         return data["response"]
 
@@ -380,12 +370,18 @@ class VKAdapter(SocialAdapter):
                 for doc in content.documents:
                     attachments.append(await self._upload_doc(client, token, group_id, doc))
 
-                # Ссылку в ВК добавляем прямо в attachments: отдельного метода API
-                # для вложения-ссылки нет, а VK сам разворачивает из URL превью.
-                link = (st.get("link") or "").strip()
-                if link:
-                    attachments.append(link)
                 message = (content.text or "").strip()
+                link = (st.get("link") or "").strip()
+
+                # ИСПРАВЛЕНИЕ ВЗАИМОДЕЙСТВИЯ ССЫЛКИ И ФОТО В ВК:
+                # В attachments может быть ссылка ТОЛЬКО если нет медиафайлов!
+                if link:
+                    if attachments:
+                        # Если уже есть фото/видео — добавляем ссылку текстом в конец поста
+                        message = f"{message}\n\n{link}".strip()
+                    else:
+                        # Если медиафайлов нет — прикрепляем как ссылочный сниппет
+                        attachments.append(link)
 
                 if not message and not attachments:
                     raise AdapterError("VK: пустой пост (нет текста и вложений)")
@@ -396,12 +392,15 @@ class VKAdapter(SocialAdapter):
                     "message": message[:4096],
                     "attachments": ",".join(attachments),
                 })
+                print(f"!!! VK wall.post raw response: {r.text}", flush=True)
                 resp = self._unwrap("wall.post", r)
                 post_id = resp["post_id"]
                 if st.get("pin_post"):
                     await self.call("wall.pin", token, owner_id=owner, post_id=post_id)
-                return PublishOutcome(True, external_id=f"{owner}_{post_id}",
-                                      external_url=f"https://vk.com/wall{owner}_{post_id}")
+                
+                ext_url = f"https://vk.com/wall{owner}_{post_id}"
+                print(f"!!! VK POST PUBLISHED SUCCESSFULLY: {ext_url}", flush=True)
+                return PublishOutcome(True, external_id=f"{owner}_{post_id}", external_url=ext_url)
         except httpx.HTTPError as e:
             raise AdapterError(
                 f"VK: сетевая ошибка при публикации ({e.__class__.__name__})") from e
