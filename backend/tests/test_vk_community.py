@@ -352,7 +352,8 @@ async def test_photo_upload_falls_back_to_photo_id(account, monkeypatch):
     saves = [c for u, c in captured["calls"] if "saveWallPhoto" in u]
     assert len(saves) == 2
     assert saves[0]["photo"] == BLOB
-    assert saves[1]["photo"] == "143975546f"
+    # полный идентификатор фото — вместе с суффиксом размера после двоеточия
+    assert saves[1]["photo"] == "143975546f:z"
     wall = next(c for u, c in captured["calls"] if "wall.post" in u)
     assert wall["attachments"] == "photo-987_456"
 
