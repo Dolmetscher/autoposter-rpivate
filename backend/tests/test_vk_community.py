@@ -18,7 +18,10 @@ def account():
 
 def test_connect_form_fields():
     fields = {f["name"]: f["required"] for f in _adapter().connect_requires()}
-    assert fields == {"access_token": True, "group_ref": False, "name": False}
+    # user_token — ключ пользователя: без него ВК не даёт загрузить фото
+    # ключом сообщества (ошибка 27 «method is unavailable with group auth»).
+    assert fields == {"access_token": True, "user_token": False,
+                      "group_ref": False, "name": False}
 
 
 def test_no_oauth_flow():
@@ -412,3 +415,153 @@ async def test_photo_upload_retries_on_transient_failure(account, monkeypatch):
     assert out.ok
     wall = next(c for u, c in captured["calls"] if "wall.post" in u)
     assert wall["attachments"] == "photo-987_456"
+
+
+# ---------- публикация ключом сообщества ----------
+
+GROUP_AUTH_ERROR = {"error": {"error_code": 27, "error_msg": "Group authorization failed: "
+                                                            "method is unavailable with group auth."}}
+
+
+def _fake_album_client(monkeypatch, captured, *, get_upload_server_errors=0,
+                        create_album=True):
+    """Клиент ВК, где photos.getWallUploadServer недоступен для сообщества."""
+    import httpx as _httpx
+
+    state = {"get_upload_server": 0}
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, data=None, **kw):
+            captured.setdefault("calls", []).append((url, data))
+            captured.setdefault("headers", []).append(kw.get("headers") or {})
+            if "getWallUploadServer" in url:
+                return _RawResp(GROUP_AUTH_ERROR)
+            if "getUploadServer" in url:
+                state["get_upload_server"] += 1
+                if state["get_upload_server"] <= get_upload_server_errors:
+                    return _RawResp(GROUP_AUTH_ERROR)
+                return _RawResp({"response": {
+                    "upload_url": "https://pu.vk.com/c2/ss2/upload.php?act=do_add",
+                    "album_id": (data or {}).get("album_id") or 555, "user_id": 987}})
+            if "createAlbum" in url:
+                captured["create_album"] = data
+                if not create_album:
+                    return _RawResp(GROUP_AUTH_ERROR)
+                return _RawResp({"response": {"album_id": 999}})
+            if "upload.php" in url:
+                captured["files"] = kw.get("files")
+                return _RawResp({"server": 7, "photo": "c141990203", "hash": "h1"})
+            if "photos.save" in url:
+                captured["photos_save"] = data
+                return _RawResp({"response": [{"id": 777, "owner_id": -987}]})
+            if "wall.post" in url:
+                return _RawResp({"response": {"post_id": 42}})
+            return _RawResp({"response": 1})
+
+    orig = _httpx.AsyncClient
+    _httpx.AsyncClient = FakeClient
+    return orig
+
+
+async def _publish_with_album_fallback(monkeypatch, **kwargs):
+    from app.integrations.base import PublishContent
+
+    captured = {}
+    orig = _fake_album_client(monkeypatch, captured, **kwargs)
+
+    async def fake_read(media):
+        return b"\x89PNG\r\n\x1a\nfake"
+
+    monkeypatch.setattr("app.integrations.vk.read_media_bytes", fake_read)
+    try:
+        out = await _adapter().publish(
+            _page(_FakeAccount()), PublishContent(text="Материал", media=[_Media()]))
+    finally:
+        import httpx as _httpx
+        _httpx.AsyncClient = orig
+    return out, captured
+
+
+async def test_photo_upload_falls_back_to_album(account, monkeypatch):
+    """Ключ сообщества не может вызвать photos.getWallUploadServer (ошибка 27) —
+    тогда грузим фото через альбом сообщества: photos.getUploadServer + photos.save."""
+    out, captured = await _publish_with_album_fallback(monkeypatch)
+
+    assert out.ok
+    wall = next(c for u, c in captured["calls"] if "wall.post" in u)
+    assert wall["attachments"] == "photo-987_777"
+    save = captured["photos_save"]
+    assert save["photos_list"] == "c141990203"
+    assert save["album_id"] == 555
+    assert save["group_id"] == 987
+
+
+async def test_photo_upload_creates_album_when_upload_server_denied(account, monkeypatch):
+    """Если и photos.getUploadServer недоступен — создаём альбом автопостера."""
+    out, captured = await _publish_with_album_fallback(
+        monkeypatch, get_upload_server_errors=1)
+
+    assert out.ok
+    assert captured["create_album"]["group_id"] == 987
+    save = captured["photos_save"]
+    assert save["album_id"] == 999
+
+
+async def test_photo_upload_sends_user_agent(account, monkeypatch):
+    """ВК режет запросы без нормального User-Agent."""
+    out, captured = await _publish_with_album_fallback(monkeypatch)
+
+    assert out.ok
+    headers = [h for h in captured["headers"] if h]
+    assert headers, "заголовки не передавались"
+    assert all("User-Agent" in h for h in headers)
+
+
+def test_vk_error_27_explains_community_right():
+    """Ошибка 27 переводится в понятную подсказку про права сообщества."""
+    from app.integrations.base import AdapterError
+
+    with pytest.raises(AdapterError) as ei:
+        VKAdapter._unwrap("photos.getWallUploadServer",
+                          _RawResp(GROUP_AUTH_ERROR))
+    msg = str(ei.value)
+    assert "unavailable with group auth" in msg
+    assert "Загрузка фотографий" in msg
+
+
+async def test_user_token_used_for_upload_community_token_for_post(monkeypatch):
+    """Ключ пользователя — на загрузку файлов, ключ сообщества — на публикацию."""
+    from app.integrations.base import PublishContent
+
+    captured = {}
+    orig = _fake_upload_client(
+        monkeypatch, {"server": 856312, "photo": BLOB, "hash": "abc123"},
+        [{"response": [{"id": 456, "owner_id": -987}]}], captured)
+
+    class Acc:
+        credentials = {"access_token": "community-token", "user_token": "user-token"}
+
+    async def fake_read(media):
+        return b"\x89PNG\r\n\x1a\nfake"
+
+    monkeypatch.setattr("app.integrations.vk.read_media_bytes", fake_read)
+    try:
+        await _adapter().publish(
+            _page(Acc()), PublishContent(text="Материал", media=[_Media()]))
+    finally:
+        import httpx as _httpx
+        _httpx.AsyncClient = orig
+
+    upload = next(c for u, c in captured["calls"] if "getWallUploadServer" in u)
+    wall = next(c for u, c in captured["calls"] if "wall.post" in u)
+    assert upload["access_token"] == "user-token"
+    assert wall["access_token"] == "community-token"

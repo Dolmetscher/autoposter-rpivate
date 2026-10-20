@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.types import JSON, TypeDecorator
 
 from ..config import settings
+
+log = logging.getLogger("crypto")
 
 _fernet: Fernet | None = None
 
@@ -40,7 +43,9 @@ def decrypt_value(stored):
         return stored  # legacy-запись в открытом виде
     try:
         return json.loads(_f().decrypt(raw.encode()).decode())
-    except (InvalidToken, ValueError):
+    except (InvalidToken, ValueError) as e:
+        log.warning("не удалось расшифровать секреты (%s) — скорее всего сменился "
+                    "SECRET_KEY/CREDENTIALS_SECRET, секреты придётся ввести заново", e)
         return {}
 
 
