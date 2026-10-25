@@ -108,16 +108,18 @@ class TelegramAdapter(SocialAdapter):
         base = f"https://api.telegram.org/bot{token}"
         link = (st.get('link') or '').strip()
         link_preview = st.get('link_preview', True)
-        # Ссылка с превью уходит и в текст, и в подпись — иначе она теряется
-        # при отправке без медиа (sendMessage). Под неё резервируем место,
-        # чтобы лимит подписи (1024) не обрезал именно её.
         text = (content.text or "").strip()
         if link:
             head = text[:max(1024 - len(link) - 1, 0)].rstrip()
             full_text = f"{head}\n{link}" if head else link
         else:
             full_text = text
+
+        # Подпись к медиа в Telegram ограничена 1024 символами. Если текст длиннее,
+        # первая часть идёт подписью, а остаток публикуется отдельными сообщениями.
         caption = full_text[:1024]
+        caption_rest = full_text[1024:]
+
         gallery = [(_named(await read_media_bytes(m), media_filename(m, "media")), m.type)
                    for m in content.media]
         docs = [(_named(await read_media_bytes(d), media_filename(d, "document")), "document")
@@ -168,13 +170,19 @@ class TelegramAdapter(SocialAdapter):
                     if i == 0:
                         message_id = res["message_id"]
             else:
+                # Нет медиа — отправляем текст целиком, разбивая на 4096.
                 if not full_text:
                     raise AdapterError("Telegram: пустой пост")
-                r = await client.post(f"{base}/sendMessage", json={
-                    "chat_id": chat, "text": full_text,
-                    "disable_web_page_preview": not link_preview,
-                })
-                message_id = self._tg_ok("sendMessage", r)["message_id"]
+                message_id = await self._send_text_chunks(
+                    client, f"https://api.telegram.org/bot{token}", chat, full_text,
+                    link_preview=link_preview)
+            # Остаток текста, не поместившийся в подпись — отдельными сообщениями.
+            if caption_rest:
+                rest_id = await self._send_text_chunks(
+                    client, f"https://api.telegram.org/bot{token}", chat, caption_rest,
+                    link_preview=False, reply_to=message_id)
+                if message_id is None:
+                    message_id = rest_id
             if st.get("pin_post") and message_id:
                 await client.post(f"{base}/pinChatMessage",
                                   data={"chat_id": chat, "message_id": message_id})
@@ -183,6 +191,28 @@ class TelegramAdapter(SocialAdapter):
         url = (f"https://t.me/{name.lstrip('@')}/{message_id}" if name.startswith("@")
                else f"https://t.me/c/{str(chat).replace('-100', '')}/{message_id}")
         return PublishOutcome(True, external_id=ext, external_url=url)
+
+    async def _send_text_chunks(self, client: httpx.AsyncClient, base_url: str,
+                                chat: int | str, text: str, link_preview: bool = True,
+                                reply_to: int | None = None) -> int:
+        """Отправляет длинный текст частями по 4096 символов (лимит Telegram на sendMessage).
+
+        Возвращает ID последнего сообщения."""
+        last_id = None
+        chunk_size = 4096
+        start = 0
+        while start < len(text):
+            chunk = text[start:start + chunk_size]
+            data = {"chat_id": chat, "text": chunk,
+                    "disable_web_page_preview": not link_preview}
+            if reply_to is not None:
+                data["reply_to_message_id"] = reply_to
+            r = await client.post(f"{base_url}/sendMessage", json=data)
+            res = self._tg_ok("sendMessage", r)
+            last_id = res["message_id"]
+            reply_to = last_id
+            start += chunk_size
+        return last_id
 
     async def _publish_account(self, page, content: PublishContent, creds: dict) -> PublishOutcome:
         api_id = int(creds.get("api_id") or 0)
@@ -206,29 +236,55 @@ class TelegramAdapter(SocialAdapter):
             text = (content.text or "").strip()
             if link:
                 head = text[:max(1024 - len(link) - 1, 0)].rstrip()
-                text_to_send = f"{head}\n{link}" if head else link
+                full_text = f"{head}\n{link}" if head else link
             else:
-                text_to_send = text
+                full_text = text
+
+            # Подпись к медиа в Telegram ограничена 1024 символами. Если текст длинше,
+            # остаток публикуется отдельным сообщением (в reply к первому).
+            caption = full_text[:1024]
+            caption_rest = full_text[1024:]
+
             with TelegramClient(StringSession(session), api_id, api_hash) as c:
                 entity = c.get_entity(int(page.social_page_id))
                 if st.get("publish_as_story"):
                     if not files:
                         raise AdapterError("Telegram истории: нужен файл")
                     bio, ftype = files[0]
-                    return _send_story(c, entity, bio, ftype, text_to_send), None
+                    return _send_story(c, entity, bio, ftype, text), None
+
                 msg_id = None
+
                 if files:
+                    # Есть медиа — отправляем с подписью (первые 1024)
                     res = c.send_file(entity, [bio for bio, _ in files],
-                                      caption=text_to_send or None)
+                                      caption=caption or None)
                     if isinstance(res, list):
                         msg_id = res[0].id if res else None
                     else:
                         msg_id = getattr(res, "id", None)
-                elif text_to_send:
-                    msg = c.send_message(entity, text_to_send, link_preview=link_preview)
-                    msg_id = msg.id
+
+                    # Остаток подписи — отдельным сообщением в reply
+                    if caption_rest and msg_id:
+                        c.send_message(entity, caption_rest,
+                                       link_preview=False,
+                                       reply_to=msg_id)
                 else:
-                    raise AdapterError("Telegram: пустой пост")
+                    # Нет медиа — отправляем текст целиком, разбивая на 4096
+                    if not full_text:
+                        raise AdapterError("Telegram: пустой пост")
+                    msg_id = None
+                    start = 0
+                    chunk_size = 4096
+                    while start < len(full_text):
+                        chunk = full_text[start:start + chunk_size]
+                        msg = c.send_message(entity, chunk,
+                                             link_preview=link_preview,
+                                             reply_to=msg_id)
+                        if msg_id is None:
+                            msg_id = msg.id
+                        start += chunk_size
+
                 if st.get("pin_post") and msg_id:
                     try:
                         c.pin_message(entity, msg_id)
