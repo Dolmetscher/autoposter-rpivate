@@ -19,6 +19,7 @@ export interface Account {
   social_account_name: string
   social_account_photo: string
   status: string
+  network?: string // slug соцсети: vk | ok | facebook | telegram | …
   pages: Page[]
 }
 
@@ -31,6 +32,7 @@ export interface Page {
   social_page_photo: string
   page_kind: string
   can_post: boolean
+  network?: string // slug соцсети: vk | ok | facebook | telegram | …
 }
 
 export interface MediaFile {

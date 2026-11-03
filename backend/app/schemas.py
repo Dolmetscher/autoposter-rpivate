@@ -5,10 +5,16 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, computed_field
 
-from .constants import SourceInfo, SOURCES, PLANNED_SOURCES
+from .constants import SourceInfo, SOURCES, PLANNED_SOURCES, get_source
 from .util import utcnow
+
+
+def _network_slug(source_id: int | None) -> str:
+    """Слаг соцсети по source_id: vk | ok | facebook | telegram | …"""
+    src = get_source(source_id) if source_id is not None else None
+    return src.slug if src else ""
 
 
 class RegisterIn(BaseModel):
@@ -52,6 +58,12 @@ class AccountOut(BaseModel):
     social_account_photo: str
     status: str
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def network(self) -> str:
+        """Название соцсети аккаунта (vk | ok | facebook | telegram | …)."""
+        return _network_slug(self.source_id)
+
     class Config:
         from_attributes = True
 
@@ -65,6 +77,12 @@ class PageOut(BaseModel):
     social_page_photo: str
     page_kind: str
     can_post: bool
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def network(self) -> str:
+        """Название соцсети страницы (vk | ok | facebook | telegram | …)."""
+        return _network_slug(self.source_id)
 
     class Config:
         from_attributes = True

@@ -38,7 +38,8 @@ class FacebookAdapter(SocialAdapter):
             
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.get(f"{GRAPH}/me/accounts",
-                                 params={"fields": "name,picture,access_token", "access_token": token})
+                                 params={"fields": "name,picture,access_token",
+                                         "limit": 200, "access_token": token})
             data = r.json()
 
             if "error" in data and data["error"].get("code") in (100, 190, 200):
