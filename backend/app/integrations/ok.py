@@ -115,12 +115,51 @@ class OKAdapter(SocialAdapter):
         return pages
 
     # ---------- публикация ----------
+    async def _upload_video(self, creds: dict, gid: str | None, media) -> str:  # noqa: ANN001
+        """Загрузка ролика в видеоальбом группы (gid) или профиля. Возвращает video_id."""
+        vname = media_filename(media, "video.mp4")
+        params = {"file_name": vname}
+        if gid:
+            params["gid"] = gid
+        up = await self.call("video.getUploadUrl", creds, params)
+        # video.getUploadUrl отдаёт строку-ссылку, photosV2 — объект.
+        upload_url = up if isinstance(up, str) else (up or {}).get("upload_url")
+        if not upload_url:
+            raise AdapterError("OK: не удалось получить ссылку загрузки видео")
+        bio = io.BytesIO(await read_media_bytes(media))
+        bio.name = vname
+        try:
+            async with httpx.AsyncClient(timeout=600) as client:
+                r = await client.post(upload_url, files={"file": (vname, bio)})
+        finally:
+            bio.close()
+        try:
+            vid = (r.json() or {}).get("video_id") or ""
+        except ValueError:  # сервер вернул не-JSON (страница ошибки)
+            vid = ""
+        if not vid:
+            raise AdapterError("OK: загрузка видео не удалась (сервер не вернул video_id)")
+        return str(vid)
+
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
         creds = page.account.credentials
         st = content.settings or {}
         if st.get("publish_as_story"):
             raise AdapterError("OK: истории через API не поддерживаются")
         gid = None if getattr(page, "page_kind", "group") == "user" else page.social_page_id
+
+        if st.get("video_only"):
+            # Режим «только видео»: ролик уходит в раздел видео группы/профиля,
+            # медитопик (пост) не создаётся.
+            videos = [m for m in content.media if m.type == "video"]
+            if not videos:
+                raise AdapterError(
+                    "OK: включён режим «только видео», но видеофайлов в посте нет")
+            if len(videos) > 1:
+                raise AdapterError("OK: в один пост загружается только одно видео")
+            vid = await self._upload_video(creds, gid, videos[0])
+            return PublishOutcome(True, external_id=f"video{vid}",
+                                  external_url=f"https://ok.ru/video/{vid}")
 
         attachments: list[dict] = []
         if content.text:
@@ -158,22 +197,8 @@ class OKAdapter(SocialAdapter):
         if videos:
             if len(videos) > 1:
                 raise AdapterError("OK: в один пост загружается только одно видео")
-            vname = media_filename(videos[0], "video.mp4")
-            params = {"file_name": vname}
-            if gid:
-                params["gid"] = gid
-            up = await self.call("video.getUploadUrl", creds, params)
-            # video.getUploadUrl отдаёт строку-ссылку, photosV2 — объект.
-            upload_url = up if isinstance(up, str) else (up or {}).get("upload_url")
-            if not upload_url:
-                raise AdapterError("OK: не удалось получить ссылку загрузки видео")
-            bio = io.BytesIO(await read_media_bytes(videos[0]))
-            bio.name = vname
-            async with httpx.AsyncClient(timeout=600) as client:
-                r = await client.post(upload_url, files={"file": (vname, bio)})
-            vid = r.json().get("video_id") or ""
-            if vid:
-                attachments.append({"type": "video", "list": [{"id": vid}]})
+            vid = await self._upload_video(creds, gid, videos[0])
+            attachments.append({"type": "video", "list": [{"id": vid}]})
 
         if not attachments:
             raise AdapterError("OK: пустой пост")
@@ -188,6 +213,11 @@ class OKAdapter(SocialAdapter):
         return PublishOutcome(True, external_id=topic_id, external_url=url)
 
     async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
+        if external_id.startswith("video"):
+            # видеозапись из режима «только видео» — удаляется как видео
+            await self.call("video.delete", page.account.credentials,
+                            {"video_id": external_id[5:]})
+            return True
         await self.call("mediatopic.delete", page.account.credentials,
                         {"topic_id": external_id})
         return True

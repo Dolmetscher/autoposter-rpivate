@@ -478,6 +478,7 @@ export default function PostEditor({ sources, accounts }: Props) {
               <label className="check"><input type="checkbox" checked={bool('publish_as_story')} onChange={(e) => set('publish_as_story', e.target.checked)} /> Публиковать как историю</label>
               <label className="check"><input type="checkbox" checked={bool('publish_as_clips')} onChange={(e) => set('publish_as_clips', e.target.checked)} /> ВК: как клипы</label>
               <label className="check"><input type="checkbox" checked={bool('share_clips_to_feed')} onChange={(e) => set('share_clips_to_feed', e.target.checked)} /> ВК: дублировать клипы в ленту</label>
+              <label className="check"><input type="checkbox" checked={bool('video_only')} onChange={(e) => set('video_only', e.target.checked)} /> ВК/ОК: только видео в видеозаписи (без поста)</label>
               <label className="check"><input type="checkbox" checked={bool('publish_as_shorts')} onChange={(e) => set('publish_as_shorts', e.target.checked)} /> YouTube: как Shorts</label>
               <label className="check"><input type="checkbox" checked={bool('publish_as_reel')} onChange={(e) => set('publish_as_reel', e.target.checked)} /> Instagram: как Reels</label>
               <label className="check"><input type="checkbox" checked={bool('approval_required')} onChange={(e) => set('approval', e.target.checked ? { required: true, status: 'pending' } : {})} /> Требовать согласование (админ одобрит перед публикацией)</label>

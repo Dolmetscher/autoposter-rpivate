@@ -30,6 +30,9 @@ class VKAdapter(SocialAdapter):
     name = "ВКонтакте"
     capabilities = ("post", "photo", "video", "story", "clip", "channel")
     handles_link = True
+    note = ("через API доступны: посты на стене, фото, видео, клипы, истории. "
+            "Каналы ВКонтакте (vk.com/im/channels) пока не имеют API — пост в канал "
+            "публикуйте вручную; подключим, как только VK добавит методы")
 
     HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                              "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -489,6 +492,23 @@ class VKAdapter(SocialAdapter):
                 if st.get("publish_as_story"):
                     return await self._post_story(client, token, page, content)
 
+                if st.get("video_only"):
+                    # Режим «только видео»: ролики уходят в раздел видеозаписей
+                    # сообщества (video.save с group_id), пост на стене не создаётся.
+                    vids = [m for m in content.media if m.type == "video"]
+                    if not vids:
+                        raise AdapterError(
+                            "VK: включён режим «только видео», но видеофайлов в посте нет")
+                    first = ""
+                    for media in vids:
+                        att = await self._upload_video(client, upload_token, group_id, media)
+                        info = att.replace("video", "", 1)
+                        first = first or info
+                    return PublishOutcome(
+                        True,
+                        external_id=f"{owner}_video{first.split('_', 1)[1]}",
+                        external_url=f"https://vk.com/video{first}")
+
                 media_attachments: list[str] = []
                 for media in content.media:
                     if st.get("publish_as_clips") and media.type == "video":
@@ -577,6 +597,10 @@ class VKAdapter(SocialAdapter):
         owner, post_id = external_id.split("_", 1)
         if post_id.startswith("story"):
             await self.call("stories.delete", token, owner_id=int(owner), story_id=post_id[5:])
+        elif post_id.startswith("video"):
+            # видеозапись из режима «только видео» — удаляется через video.delete
+            await self.call("video.delete", token, owner_id=int(owner),
+                            video_id=int(post_id[5:]))
         else:
             await self.call("wall.delete", token, owner_id=int(owner), post_id=int(post_id))
         return True
@@ -585,6 +609,9 @@ class VKAdapter(SocialAdapter):
     async def fetch_stats(self, page, external_id: str) -> dict | None:  # noqa: ANN001
         token = page.account.credentials.get("access_token")
         if not token or "_" not in external_id:
+            return None
+        # статистика берётся только у постов на стене (у видео/историй — другие API)
+        if not external_id.split("_", 1)[1].isdigit():
             return None
         resp = await self.call("wall.getById", token, posts=external_id)
         items = resp.get("items") if isinstance(resp, dict) else resp
