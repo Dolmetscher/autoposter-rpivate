@@ -38,6 +38,7 @@ export default function Projects({ sources, accounts }: { sources: SourceInfo[];
   const [editPages, setEditPages] = useState<number[]>([])
   const [editSettings, setEditSettings] = useState<Record<string, unknown>>({})
   const [error, setError] = useState('')
+  const [copiedId, setCopiedId] = useState<number | null>(null)
 
   const load = () => api.get<{ list: Project[] }>('/api/web/projects')
     .then((d) => setItems(d.list)).catch(() => {})
@@ -136,6 +137,19 @@ export default function Projects({ sources, accounts }: { sources: SourceInfo[];
     return [...ids]
   }
 
+  const copyRss = async (p: Project) => {
+    if (!p.rss_url) return
+    try {
+      await navigator.clipboard.writeText(p.rss_url)
+    } catch {
+      // clipboard недоступен (http) — выделение URL вручную остаётся вариантом
+      window.prompt('Скопируйте ссылку на фид:', p.rss_url)
+      return
+    }
+    setCopiedId(p.id)
+    setTimeout(() => setCopiedId((cur) => (cur === p.id ? null : cur)), 2000)
+  }
+
   return (
     <>
       <h1>Проекты</h1>
@@ -213,19 +227,41 @@ export default function Projects({ sources, accounts }: { sources: SourceInfo[];
                   ) : (
                     (() => {
                       const ids = projectPageIds(p)
-                      return ids.length
-                        ? ids.map((pid) => {
-                            const rec = pageById.get(pid)
-                            return rec ? (
-                              <div key={pid} className="row" style={{ gap: 6, padding: '1px 0' }}>
-                                <NetBadge network={netOf(rec.account)} color={netColor(rec.account)} />
-                                <span className="hint">{rec.page.social_page_name}</span>
+                      return (
+                        <>
+                          {ids.length
+                            ? ids.map((pid) => {
+                                const rec = pageById.get(pid)
+                                return rec ? (
+                                  <div key={pid} className="row" style={{ gap: 6, padding: '1px 0' }}>
+                                    <NetBadge network={netOf(rec.account)} color={netColor(rec.account)} />
+                                    <span className="hint">{rec.page.social_page_name}</span>
+                                  </div>
+                                ) : (
+                                  <div key={pid} className="hint">Страница #{pid}</div>
+                                )
+                              })
+                            : <span className="hint">—</span>}
+                          {p.rss_url && (
+                            <div style={{ marginTop: 8, borderTop: '1px dashed var(--border)', paddingTop: 6, maxWidth: 420 }}>
+                              <div className="hint" title="Дзен забирает посты проекта из этого фида (трансляция канала)">
+                                Дзен: RSS-фид проекта
                               </div>
-                            ) : (
-                              <div key={pid} className="hint">Страница #{pid}</div>
-                            )
-                          })
-                        : <span className="hint">—</span>
+                              <div className="row" style={{ gap: 6 }}>
+                                <code style={{ fontSize: 11, wordBreak: 'break-all', flex: 1 }}>{p.rss_url}</code>
+                                <button className="ghost" style={{ fontSize: 12 }}
+                                        title="Скопировать ссылку фида"
+                                        onClick={() => copyRss(p)}>
+                                  {copiedId === p.id ? '✓' : '📋'}
+                                </button>
+                              </div>
+                              <div className="hint" style={{ fontSize: 11 }}>
+                                Вставьте ссылку в настройках трансляции канала Дзена — посты проекта попадут туда автоматически.
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )
                     })()
                   )}
                 </td>

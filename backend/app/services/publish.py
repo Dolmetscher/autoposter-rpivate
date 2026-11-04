@@ -187,6 +187,14 @@ async def publish_target(s: AsyncSession, post: Post, target: PostTarget) -> Non
             # Сеть не умеет публиковать ссылку сама — дописываем её в текст,
             # тогда превью (Open Graph) развернёт сама сеть.
             content.text = content.text_with_link()
+        if getattr(adapter, "rss_out", False) and post.project_id:
+            # Адаптер доставляет контент через RSS-фид проекта (Дзен):
+            # даём ему адрес фида, чтобы вернуть его в external_url лога.
+            project = await s.get(Project, post.project_id)
+            if project and project.rss_token:
+                base = settings.public_base_url.rstrip("/")
+                content.settings["rss_feed_url"] = (
+                    f"{base}/api/public/rss-out/{project.id}/{project.rss_token}.xml")
         outcome = await adapter.publish(page, content)
     except AdapterError as e:
         outcome = type("Outcome", (), {"ok": False, "external_id": "", "external_url": "",

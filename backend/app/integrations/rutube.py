@@ -14,6 +14,8 @@ class RutubeAdapter(SocialAdapter):
     source_id = 15
     name = "Рутуб"
     capabilities = ("video",)
+    note = ("экспериментальная интеграция: API-токен выдаёт поддержка Rutube "
+            "по запросу через rutube.ru/feedback")
 
     def connect_requires(self) -> list[dict]:
         return [{"name": "token",

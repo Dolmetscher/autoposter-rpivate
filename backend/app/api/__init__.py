@@ -1,10 +1,10 @@
 """Сборка всех роутеров: веб-API (/api/web) и публичный API (/api).
 Все веб-роуты, кроме auth и oauth, проходят проверку роли (deps.guard_role);
-вебхук ЮKassa — публичный, без guard."""
+вебхук ЮKassa и RSS-фид проекта — публичные, без guard."""
 from fastapi import APIRouter, Depends
 
 from ..deps import guard_role
-from .public import hooppy, yookassa
+from .public import hooppy, rss_out, yookassa
 from .web import (accounts, ai, analytics, auth, billing, crosspost, dashboard,
                   files, oauth, posts, projects, schedules, settings_api,
                   sources, team, templates)
@@ -27,6 +27,11 @@ public_router = APIRouter()
 public_router.add_api_route(
     "/files/{file_id}/raw", files.raw_file, methods=["GET"], name="raw_file")
 
+# без guard: RSS-фид проекта для трансляции Дзена — доступ по секретному
+# токену в самом URL (Дзен не может передавать заголовок Authorization)
+rss_out_router = APIRouter()
+rss_out_router.include_router(rss_out.router)
+
 # под guard: роли viewer/editor/admin ограничивают мутации
 guarded = APIRouter(dependencies=[Depends(guard_role)])
 for r in (accounts.router, sources.router, files.router, posts.router,
@@ -41,3 +46,4 @@ api_router.include_router(public_router, prefix="/api/web")
 api_router.include_router(guarded, prefix="/api/web")
 api_router.include_router(hooppy.router, prefix="/api")
 api_router.include_router(yookassa.router, prefix="/api")
+api_router.include_router(rss_out_router, prefix="/api/public")

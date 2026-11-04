@@ -1,8 +1,11 @@
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ...config import settings
 from ...db import get_session
 from ...deps import get_current_user
 from ...models import Project, User, SocialAccount, SocialPage
@@ -11,10 +14,25 @@ from ...schemas import ProjectIn
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+def _rss_url(p: Project) -> str | None:
+    if not p.rss_token:
+        return None
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/api/public/rss-out/{p.id}/{p.rss_token}.xml"
+
+
+def _new_rss_token() -> str:
+    # Токен есть у каждого проекта: это просто секрет ссылки фида.
+    # Фид используется Дзен-проектами (трансляция), остальным не мешает.
+    return secrets.token_urlsafe(24)
+
+
 def _project_out(p: Project) -> dict:
     return {"id": p.id, "name": p.name, "settings": p.settings,
             "account_ids": [a.id for a in p.accounts],
-            "page_ids": [pg.id for pg in p.pages]}
+            "page_ids": [pg.id for pg in p.pages],
+            # публичный RSS-фид проекта — канал доставки в Дзен (трансляция)
+            "rss_url": _rss_url(p)}
 
 
 @router.get("")
@@ -25,6 +43,15 @@ async def list_projects(user: User = Depends(get_current_user),
                                 selectinload(Project.pages))
         .where(Project.user_id == user.id).order_by(Project.id)
     )).scalars().all()
+    # проектам, созданным до появления фида, выдаём токен лениво
+    # (только строка проекта — без ленивой загрузки коллекций)
+    changed = False
+    for p in rows:
+        if not p.rss_token:
+            p.rss_token = _new_rss_token()
+            changed = True
+    if changed:
+        await s.commit()
     return {"list": [_project_out(p) for p in rows]}
 
 
@@ -61,7 +88,8 @@ async def _load_pages(s: AsyncSession, user: User, page_ids: list[int]) -> list[
 @router.post("", status_code=201)
 async def create_project(payload: ProjectIn, user: User = Depends(get_current_user),
                          s: AsyncSession = Depends(get_session)):
-    proj = Project(user_id=user.id, name=payload.name, settings=payload.settings)
+    proj = Project(user_id=user.id, name=payload.name, settings=payload.settings,
+                   rss_token=_new_rss_token())
     if payload.account_ids:
         proj.accounts = await _load_accounts(s, user, payload.account_ids)
     if payload.page_ids:

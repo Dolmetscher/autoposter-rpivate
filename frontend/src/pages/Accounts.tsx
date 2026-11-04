@@ -90,7 +90,7 @@ export default function Accounts({ sources, reload }: { sources: SourceInfo[]; r
             <button key={s.id} className="secondary"
                     style={{ opacity: s.implemented ? 1 : 0.45 }}
                     disabled={!s.implemented}
-                    title={s.implemented ? '' : 'Будет добавлено в следующих версиях'}
+                    title={s.note || (s.implemented ? '' : 'Будет добавлено в следующих версиях')}
                     onClick={() => { setChosen(s.id); setFields({}); setError(''); setInfo('') }}>
               <span className="dot" style={{ background: sourceColor(sources, s.id) }} />
               {s.name}
@@ -101,6 +101,11 @@ export default function Accounts({ sources, reload }: { sources: SourceInfo[]; r
         {chosenSrc && (
           <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
             <h4 style={{ margin: '0 0 10px' }}>Подключение: {chosenSrc.name}</h4>
+            {chosenSrc.note && (
+              <p className="hint" style={{ margin: '0 0 10px', whiteSpace: 'pre-line' }}>
+                ℹ️ {chosenSrc.note}
+              </p>
+            )}
             {chosenSrc.experimental && (
               <p className="hint">⚠️ Экспериментальная интеграция — может работать нестабильно.</p>
             )}
