@@ -18,6 +18,7 @@ import re
 
 import httpx
 
+from ._mdfmt import md_to_plain
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
                    SourceItem, media_filename, read_media_bytes, upload_filename)
 
@@ -32,7 +33,9 @@ class VKAdapter(SocialAdapter):
     handles_link = True
     note = ("через API доступны: посты на стене, фото, видео, клипы, истории. "
             "Каналы ВКонтакте (vk.com/im/channels) пока не имеют API — пост в канал "
-            "публикуйте вручную; подключим, как только VK добавит методы")
+            "публикуйте вручную; подключим, как только VK добавит методы. "
+            "Форматирование текста постов VK API не поддерживает — разметка "
+            "Markdown аккуратно снимается, остаются чистый текст и ссылки")
 
     HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                              "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -529,7 +532,9 @@ class VKAdapter(SocialAdapter):
                         await self._upload_doc(client, upload_token, group_id, doc))
 
                 attachments = list(media_attachments)
-                message = (content.text or "").strip()
+                # VK не рендерит Markdown в постах — снимаем разметку,
+                # оставляя чистый текст (ссылки [текст](url) → «текст (url)»)
+                message = md_to_plain((content.text or "").strip())
                 link = (st.get("link") or "").strip()
 
                 # Проверяем галочку превью (поддерживаем любые возможные имена переменной из формы)

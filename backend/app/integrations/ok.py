@@ -9,6 +9,7 @@ import json
 import httpx
 
 from ..config import settings
+from ._mdfmt import md_to_plain
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
                    media_filename, read_media_bytes)
 
@@ -17,6 +18,9 @@ class OKAdapter(SocialAdapter):
     source_id = 2
     name = "Одноклассники"
     capabilities = ("post", "photo", "video")
+    note = ("форматирование текста API ОК не поддерживает: разметка Markdown "
+            "(жирный/курсив/ссылки) аккуратно снимается, остаются чистый текст "
+            "и ссылки")
 
     # ---------- служебные ----------
     async def call(self, method: str, creds: dict, extra_params: dict | None = None) -> dict:
@@ -163,7 +167,7 @@ class OKAdapter(SocialAdapter):
 
         attachments: list[dict] = []
         if content.text:
-            attachments.append({"type": "text", "text": content.text})
+            attachments.append({"type": "text", "text": md_to_plain(content.text)})
 
         photos = [m for m in content.media if m.type == "photo"]
         if photos:
