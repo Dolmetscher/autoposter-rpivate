@@ -266,13 +266,18 @@ class DzenAdapter(SocialAdapter):
                 })
             if r3.status_code != 200:
                 raise AdapterError(f"Дзен: публикация поста не удалась (HTTP {r3.status_code})")
-            external_url = self._published_url(r3, slug)
+            external_url = self._published_url(r3, pub_id)
         return PublishOutcome(ok=True, external_id=f"brief-{pub_id}",
                               external_url=external_url)
 
     @staticmethod
-    def _published_url(r: httpx.Response, slug: str) -> str:
-        """Ссылка на опубликованный пост, если сервер её вернул."""
+    def _published_url(r: httpx.Response, pub_id: str) -> str:
+        """Ссылка на опубликованный пост.
+
+        Сервер обычно не возвращает ссылку, но формат проверен живым тестом:
+        https://dzen.ru/post/{id} отдаёт 200 для опубликованного поста
+        и 404 для несуществующего идентификатора.
+        """
         try:
             data = r.json()
         except ValueError:
@@ -282,7 +287,7 @@ class DzenAdapter(SocialAdapter):
                 val = data.get(key)
                 if isinstance(val, str) and val.startswith("http"):
                     return val
-        return f"https://dzen.ru/profile/editor/{slug}/publications?state=published"
+        return f"https://dzen.ru/post/{pub_id}"
 
     async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
         raise AdapterError("Дзен: удаление из фида недоступно — уберите пост из проекта "
