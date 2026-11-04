@@ -117,6 +117,9 @@ class Project(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     settings: Mapped[dict] = mapped_column(JSON, default=dict)  # пул страниц/текстов для случайного контента
+    # Токен RSS-фида проекта (/api/public/rss-out/{id}/{token}.xml) — канал
+    # доставки в Дзен (трансляция). Пустая строка = ещё не сгенерирован.
+    rss_token: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     accounts: Mapped[list["SocialAccount"]] = relationship(

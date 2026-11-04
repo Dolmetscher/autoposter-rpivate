@@ -18,5 +18,7 @@ async def list_sources(user: User = Depends(get_current_user)):
         if info.adapter:
             adapter = get_adapter(sid)
             d["connect_fields"] = adapter.connect_requires()
+            # примечание о статусе интеграции (ограничения API, эксперименты)
+            d["note"] = getattr(adapter, "note", "") or ""
         out.append(d)
     return {"list": out}

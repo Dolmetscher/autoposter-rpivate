@@ -10,6 +10,8 @@ export interface SourceInfo {
   capabilities: string[]
   color: string
   connect_fields?: { name: string; label: string; required: boolean }[]
+  // примечание о статусе интеграции: ограничения API, статус сети и т.п.
+  note?: string
 }
 
 export interface Account {
@@ -85,6 +87,8 @@ export interface Project {
   account_ids?: number[]
   // страницы, привязанные к проекту напрямую (без привязки аккаунта целиком)
   page_ids?: number[]
+  // публичный RSS-фид проекта — канал доставки в Дзен (есть у Дзен-проектов)
+  rss_url?: string | null
 }
 
 export interface Schedule {
