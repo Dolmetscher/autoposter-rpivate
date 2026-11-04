@@ -1,5 +1,10 @@
 """Telegram: боты (каналы/группы) и аккаунты через Telethon (истории, диалоги).
-Публичные каналы также поддерживаются как источник кросспостинга (t.me/s/...)."""
+Публичные каналы также поддерживаются как источник кросспостинга (t.me/s/...).
+
+Markdown в тексте постов рендерится в HTML (parse_mode=HTML) у ботов и
+через Telethon; каждый кусок (подпись/части длинного текста) рендерится
+отдельно, поэтому битая/разрезанная разметка не ломает отправку.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -8,6 +13,7 @@ import re
 
 import httpx
 
+from ._mdfmt import md_to_plain, md_to_telegram_html
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
                    SourceItem, media_filename, read_media_bytes)
 
@@ -23,6 +29,9 @@ class TelegramAdapter(SocialAdapter):
     name = "Telegram"
     capabilities = ("post", "photo", "video", "document", "story", "channel", "chat")
     handles_link = True  # ссылка идёт в подпись, превью отключается флагом
+    note = ("поддерживается разметка Markdown: **жирный**, *курсив*, "
+            "__подчёркнутый__, ~~зачёркнутый~~, `код`, [текст](ссылка) — "
+            "применяется при публикации")
 
     # ---------- подключение ----------
     def connect_requires(self) -> list[dict]:
@@ -117,8 +126,11 @@ class TelegramAdapter(SocialAdapter):
 
         # Подпись к медиа в Telegram ограничена 1024 символами. Если текст длиннее,
         # первая часть идёт подписью, а остаток публикуется отдельными сообщениями.
-        caption = full_text[:1024]
+        # Каждый кусок рендерится из исходного текста отдельно — незакрытые
+        # маркеры остаются простым текстом и не ломают разбор HTML.
+        caption_src = full_text[:1024]
         caption_rest = full_text[1024:]
+        caption = md_to_telegram_html(caption_src)
 
         gallery = [(_named(await read_media_bytes(m), media_filename(m, "media")), m.type)
                    for m in content.media]
@@ -134,6 +146,7 @@ class TelegramAdapter(SocialAdapter):
                     field = {"photo": "photo", "video": "video"}.get(mtype, "document")
                     r = await client.post(f"{base}/{method}",
                                           data={"chat_id": chat, "caption": caption,
+                                                "parse_mode": "HTML",
                                                 "disable_web_page_preview": not link_preview},
                                           files={field: (bio.name, bio)})
                     message_id = self._tg_ok(method, r)["message_id"]
@@ -144,6 +157,7 @@ class TelegramAdapter(SocialAdapter):
                         entry = {"type": mtype, "media": f"attach://file{i}"}
                         if i == 0 and caption:
                             entry["caption"] = caption
+                            entry["parse_mode"] = "HTML"
                         media_group.append(entry)
                     r = await client.post(f"{base}/sendMediaGroup",
                                           data={"chat_id": chat,
@@ -163,6 +177,7 @@ class TelegramAdapter(SocialAdapter):
                     data = {"chat_id": chat}
                     if i == 0:
                         data["caption"] = caption
+                        data["parse_mode"] = "HTML"
                         data["disable_web_page_preview"] = not link_preview
                     r = await client.post(f"{base}/sendDocument", data=data,
                                           files={"document": (bio.name, bio)})
@@ -197,13 +212,16 @@ class TelegramAdapter(SocialAdapter):
                                 reply_to: int | None = None) -> int:
         """Отправляет длинный текст частями по 4096 символов (лимит Telegram на sendMessage).
 
-        Возвращает ID последнего сообщения."""
+        Каждый кусок — исходный Markdown, отрисованный в HTML отдельно:
+        лимит считается по видимому тексту, а разрезанные маркеры просто
+        остаются текстом и не ломают parse_mode. Возвращает ID последнего сообщения."""
         last_id = None
         chunk_size = 4096
         start = 0
         while start < len(text):
             chunk = text[start:start + chunk_size]
-            data = {"chat_id": chat, "text": chunk,
+            data = {"chat_id": chat, "text": md_to_telegram_html(chunk),
+                    "parse_mode": "HTML",
                     "disable_web_page_preview": not link_preview}
             if reply_to is not None:
                 data["reply_to_message_id"] = reply_to
@@ -244,6 +262,7 @@ class TelegramAdapter(SocialAdapter):
             # остаток публикуется отдельным сообщением (в reply к первому).
             caption = full_text[:1024]
             caption_rest = full_text[1024:]
+            caption_html = md_to_telegram_html(caption)
 
             with TelegramClient(StringSession(session), api_id, api_hash) as c:
                 entity = c.get_entity(int(page.social_page_id))
@@ -251,14 +270,14 @@ class TelegramAdapter(SocialAdapter):
                     if not files:
                         raise AdapterError("Telegram истории: нужен файл")
                     bio, ftype = files[0]
-                    return _send_story(c, entity, bio, ftype, text), None
+                    return _send_story(c, entity, bio, ftype, md_to_plain(text)), None
 
                 msg_id = None
 
                 if files:
                     # Есть медиа — отправляем с подписью (первые 1024)
                     res = c.send_file(entity, [bio for bio, _ in files],
-                                      caption=caption or None)
+                                      caption=caption_html or None, parse_mode="html")
                     if isinstance(res, list):
                         msg_id = res[0].id if res else None
                     else:
@@ -266,7 +285,8 @@ class TelegramAdapter(SocialAdapter):
 
                     # Остаток подписи — отдельным сообщением в reply
                     if caption_rest and msg_id:
-                        c.send_message(entity, caption_rest,
+                        c.send_message(entity, md_to_telegram_html(caption_rest),
+                                       parse_mode="html",
                                        link_preview=False,
                                        reply_to=msg_id)
                 else:
@@ -278,7 +298,8 @@ class TelegramAdapter(SocialAdapter):
                     chunk_size = 4096
                     while start < len(full_text):
                         chunk = full_text[start:start + chunk_size]
-                        msg = c.send_message(entity, chunk,
+                        msg = c.send_message(entity, md_to_telegram_html(chunk),
+                                             parse_mode="html",
                                              link_preview=link_preview,
                                              reply_to=msg_id)
                         if msg_id is None:
