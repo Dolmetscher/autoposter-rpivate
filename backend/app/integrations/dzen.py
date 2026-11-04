@@ -3,21 +3,26 @@
 Два пути доставки контента:
 
 1. **Экспериментальный путь «пост»** (мгновенно): короткий текст (≤4096
-   символов) без медиафайлов публикуется как «пост» (короткая запись в
-   ленте подписчиков) через неофициальный editor-api — эмуляция запросов
-   веб-редактора Дзена. Нужны cookie сессии и ссылка на канал. API у
-   Дзена нет и может измениться без предупреждения; при ошибке сессии
-   публикация автоматически уходит в RSS (пунктом 2).
+   символов) с фотографиями (без видео) публикуется как «пост» (короткая
+   запись в ленте подписчиков) через неофициальный editor-api — эмуляция
+   запросов веб-редактора Дзена. Нужны cookie сессии и ссылка на канал.
+   API у Дзена нет и может измениться без предупреждения; при ошибке
+   сессии публикация автоматически уходит в RSS (пунктом 2).
 2. **RSS-фид проекта** (официальная «трансляция»): длинные тексты и
    посты с картинками. Проект отдаёт публичный фид
    (/api/public/rss-out/...), канал Дзена забирает материалы сам —
    появляются статьёй, обычно в пределах часа.
 
-Цепочка editor-api (снята с реального редактора):
+Цепочка editor-api (снята с реального редактора, проверена живыми тестами):
   GET  /profile/editor/{slug}                     → csrfToken + publisherId (из HTML)
   POST /editor-api/v2/add-publication             → id черновика (publicationType=brief)
+  POST /editor-api/v2/add-image                   → id картинки (multipart, поле image)
   POST /editor-api/v2/update-publication-content-and-publish → публикация
 Антибот-поля fp (f/pgrdt/pgrd) сервером не проверяются — не отправляем.
+Картинка в contentState — элемент галереи {"imageId": {"id": "<id>"}}
+(imageId — объект, строка даёт illegal-argument). Файл грузится multipart
+(add-image, поле image); если сервер отказал (антиабуз/сбой) —
+add-image-from-url: сервер сам скачивает картинку по публичному URL.
 """
 from __future__ import annotations
 
@@ -31,7 +36,7 @@ import string
 import httpx
 
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome,
-                   SocialAdapter)
+                   SocialAdapter, read_media_bytes, upload_filename)
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +63,12 @@ def _block_key() -> str:
     return "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
 
 
-def text_to_content_state(text: str) -> str:
-    """Текст поста → contentState веб-редактора (дважды закодированный JSON).
+def text_to_content_state(text: str, image_ids: list[str] | None = None) -> str:
+    """Текст поста (+ id картинок) → contentState редактора (дважды закодированный JSON).
 
-    Внутри — состояние Draft.js: каждый абзац это блок "unstyled".
+    Внутри — состояние Draft.js (каждый абзац это блок "unstyled") и
+    галерея: элемент картинки — {"imageId": {"id": "<id>"}} (снято с
+    бандла редактора и подтверждено живой публикацией).
     """
     lines = [line.rstrip() for line in (text or "").split("\n")]
     while lines and not lines[0].strip():
@@ -75,9 +82,17 @@ def text_to_content_state(text: str) -> str:
               for line in lines]
     content = json.dumps({"blocks": blocks, "entityMap": {}},
                          ensure_ascii=False, separators=(",", ":"))
-    state = {"gallery": {"ratio": "ratio-4x3", "baseRatio": "ratio-4x3", "items": []},
+    state = {"gallery": {"ratio": "ratio-4x3", "baseRatio": "ratio-4x3",
+                         "items": [{"imageId": {"id": i}} for i in (image_ids or [])]},
              "content": content}
     return json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+
+
+def image_mime(filename: str) -> str:
+    """MIME-тип картинки по расширению (для multipart-загрузки add-image)."""
+    ext = (filename or "").rsplit(".", 1)[-1].lower()
+    return {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/jpeg")
 
 
 def slug_from_link(link: str) -> str:
@@ -105,9 +120,9 @@ class DzenAdapter(SocialAdapter):
     capabilities = ("post", "photo")
     # контент уходит через RSS-фид проекта (publish.py подставит rss_feed_url)
     rss_out = True
-    note = ("короткие тексты (до 4096 символов, без вложений) публикуются постом "
+    note = ("короткие тексты (до 4096 символов) с фотографиями публикуются постом "
             "сразу — экспериментально, нужны cookie сессии и ссылка на канал; "
-            "длинные тексты и посты с картинками — через RSS-фид проекта "
+            "длинные тексты, видео и документы — через RSS-фид проекта "
             "(официальная «трансляция», появляются статьёй)")
 
     def connect_requires(self) -> list[dict]:
@@ -146,12 +161,22 @@ class DzenAdapter(SocialAdapter):
         creds = getattr(getattr(page, "account", None), "credentials", None) or {}
         cookie = creds.get("session_cookie") or ""
         text = (content.text or "").strip()
-        has_media = bool(getattr(content, "media", None)
-                         or getattr(content, "documents", None))
+        media = list(getattr(content, "media", None) or [])
+        photos = [m for m in media if getattr(m, "type", "") == "photo"]
+        has_other_media = len(photos) != len(media)
 
-        if cookie and not has_media and 0 < len(text) <= BRIEF_MAX:
+        # «Пост»: короткий текст + фото (видео/документы — только RSS-фид)
+        if cookie and not has_other_media and len(text) <= BRIEF_MAX \
+                and (text or photos):
+            urls: list[str] = []
+            for m in photos:
+                try:
+                    urls.append(content.public_url(m.file_path)
+                                if getattr(m, "file_path", "") else "")
+                except Exception:  # noqa: BLE001 — публичный URL не обязателен
+                    urls.append("")
             try:
-                return await self._publish_brief(page, creds, text)
+                return await self._publish_brief(page, creds, text, photos, urls)
             except AdapterError as e:
                 # Экспериментальный путь не удался (обычно протухла сессия) —
                 # не теряем публикацию: отправляем текст статьёй через RSS.
@@ -188,18 +213,22 @@ class DzenAdapter(SocialAdapter):
                 "Cookie": cookie}
 
     @staticmethod
-    def _api_headers(cookie: str, csrf: str, referer: str) -> dict:
-        return {"User-Agent": UA,
-                "Accept": "application/json",
-                "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Content-Type": "application/json",
-                "X-Csrf-Token": csrf,
-                "Origin": "https://dzen.ru",
-                "Referer": referer,
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-                "Cookie": cookie}
+    def _api_headers(cookie: str, csrf: str, referer: str,
+                     json_body: bool = True) -> dict:
+        headers = {"User-Agent": UA,
+                   "Accept": "application/json",
+                   "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+                   "X-Csrf-Token": csrf,
+                   "Origin": "https://dzen.ru",
+                   "Referer": referer,
+                   "Sec-Fetch-Dest": "empty",
+                   "Sec-Fetch-Mode": "cors",
+                   "Sec-Fetch-Site": "same-origin",
+                   "Cookie": cookie}
+        # для multipart (add-image) Content-Type ставит httpx сам — вместе с boundary
+        if json_body:
+            headers["Content-Type"] = "application/json"
+        return headers
 
     def _brief_slug(self, page, creds: dict) -> str:  # noqa: ANN001
         """Slug для editor-api: идентификатор страницы, иначе ссылка из аккаунта."""
@@ -208,7 +237,9 @@ class DzenAdapter(SocialAdapter):
             return candidate
         return slug_from_link(creds.get("channel_link") or "")
 
-    async def _publish_brief(self, page, creds: dict, text: str) -> PublishOutcome:  # noqa: ANN001
+    async def _publish_brief(self, page, creds: dict, text: str,
+                             photos: list | None = None,
+                             public_urls: list[str] | None = None) -> PublishOutcome:  # noqa: ANN001
         cookie = creds.get("session_cookie") or ""
         slug = self._brief_slug(page, creds)
         if not slug:
@@ -243,6 +274,54 @@ class DzenAdapter(SocialAdapter):
             if not pub_id:
                 raise AdapterError("Дзен: сервер не вернул идентификатор черновика")
 
+            # Картинки: multipart-загрузка в черновик → id → элемент галереи.
+            # Если multipart отклонён (антиабуз/сбой) — сервер сам скачивает
+            # картинку по публичному URL (add-image-from-url).
+            image_ids: list[str] = []
+            for idx, photo in enumerate(photos or []):
+                img_id = ""
+                try:
+                    data = await read_media_bytes(photo)
+                except Exception as e:
+                    raise AdapterError(f"Дзен: не удалось прочитать файл "
+                                       f"картинки: {e}") from e
+                fname = upload_filename(photo, default="photo.jpg")
+                r_img = await client.post(
+                    f"{EDITOR_BASE}/add-image"
+                    f"?publicationId={pub_id}&publisherId={publisher_id}"
+                    f"&clientRid={_client_rid()}",
+                    headers=self._api_headers(
+                        cookie, csrf,
+                        f"{editor_url}?briefEditorPublicationId={pub_id}",
+                        json_body=False),
+                    files={"image": (fname, data, image_mime(fname))})
+                if r_img.status_code == 200:
+                    try:
+                        img_id = (r_img.json() or {}).get("id") or ""
+                    except ValueError:
+                        img_id = ""
+                url = (public_urls or [""] * len(photos or ()))[idx] \
+                    if idx < len(public_urls or []) else ""
+                if not img_id and url:
+                    r_url = await client.post(
+                        f"{EDITOR_BASE}/add-image-from-url"
+                        f"?publicationId={pub_id}&publisherId={publisher_id}"
+                        f"&url={url}&clientRid={_client_rid()}",
+                        headers=self._api_headers(
+                            cookie, csrf,
+                            f"{editor_url}?briefEditorPublicationId={pub_id}"))
+                    if r_url.status_code == 200:
+                        try:
+                            img_id = (r_url.json() or {}).get("id") or ""
+                        except ValueError:
+                            img_id = ""
+                if not img_id:
+                    detail = r_img.status_code if r_img.status_code != 200 \
+                        else "нет id в ответе"
+                    raise AdapterError(f"Дзен: загрузка картинки не удалась "
+                                       f"({detail})")
+                image_ids.append(img_id)
+
             headers = self._api_headers(
                 cookie, csrf,
                 f"{editor_url}/publications?state=published&briefEditorPublicationId={pub_id}")
@@ -260,7 +339,8 @@ class DzenAdapter(SocialAdapter):
                     "delayedPublicationFlagState": "off",
                     "visibleComments": "subscribe-visible",
                     "premiumTariffs": [],
-                    "articleContent": {"contentState": text_to_content_state(text)},
+                    "articleContent": {
+                        "contentState": text_to_content_state(text, image_ids)},
                     "darkPost": False,
                     "tagsInput": {"tags": [], "detectedTagsShown": False},
                 })
