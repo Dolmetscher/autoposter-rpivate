@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from ...db import get_session
 from ...deps import get_current_user
-from ...models import Project, User, SocialAccount
+from ...models import Project, User, SocialAccount, SocialPage
 from ...schemas import ProjectIn
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -13,14 +13,16 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 def _project_out(p: Project) -> dict:
     return {"id": p.id, "name": p.name, "settings": p.settings,
-            "account_ids": [a.id for a in p.accounts]}
+            "account_ids": [a.id for a in p.accounts],
+            "page_ids": [pg.id for pg in p.pages]}
 
 
 @router.get("")
 async def list_projects(user: User = Depends(get_current_user),
                         s: AsyncSession = Depends(get_session)):
     rows = (await s.execute(
-        select(Project).options(selectinload(Project.accounts))
+        select(Project).options(selectinload(Project.accounts),
+                                selectinload(Project.pages))
         .where(Project.user_id == user.id).order_by(Project.id)
     )).scalars().all()
     return {"list": [_project_out(p) for p in rows]}
@@ -41,15 +43,32 @@ async def _load_accounts(s: AsyncSession, user: User, account_ids: list[int]) ->
     return accounts
 
 
+async def _load_pages(s: AsyncSession, user: User, page_ids: list[int]) -> list[SocialPage]:
+    """Страницы пользователя по id; ошибка, если хотя бы одна не найдена/не его."""
+    unique_ids = list(dict.fromkeys(page_ids))
+    result = await s.execute(
+        select(SocialPage).where(
+            SocialPage.id.in_(unique_ids),
+            SocialPage.user_id == user.id,
+        )
+    )
+    pages = result.scalars().all()
+    if len(pages) != len(unique_ids):
+        raise HTTPException(400, "Some pages not found or do not belong to user")
+    return pages
+
+
 @router.post("", status_code=201)
 async def create_project(payload: ProjectIn, user: User = Depends(get_current_user),
                          s: AsyncSession = Depends(get_session)):
     proj = Project(user_id=user.id, name=payload.name, settings=payload.settings)
     if payload.account_ids:
         proj.accounts = await _load_accounts(s, user, payload.account_ids)
+    if payload.page_ids:
+        proj.pages = await _load_pages(s, user, payload.page_ids)
     s.add(proj)
     await s.commit()
-    await s.refresh(proj, ["accounts"])
+    await s.refresh(proj, ["accounts", "pages"])
     return _project_out(proj)
 
 
@@ -70,8 +89,11 @@ async def update_project(project_id: int, payload: ProjectIn,
         # требует ленивой загрузки, недоступной в async-сессии (MissingGreenlet).
         await s.refresh(proj, ["accounts"])
         proj.accounts = await _load_accounts(s, user, payload.account_ids)
+    if payload.page_ids is not None:
+        await s.refresh(proj, ["pages"])
+        proj.pages = await _load_pages(s, user, payload.page_ids)
     await s.commit()
-    await s.refresh(proj, ["accounts"])
+    await s.refresh(proj, ["accounts", "pages"])
     return _project_out(proj)
 
 

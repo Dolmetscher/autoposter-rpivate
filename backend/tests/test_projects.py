@@ -122,3 +122,54 @@ async def test_create_post_with_project_includes_account_pages(client, auth_head
     post_list = r4.json()["list"]
     post_found = [p for p in post_list if p["id"] == post_id]
     assert len(post_found) == 1, f"Post {post_id} not found in list"
+
+
+@pytest.mark.asyncio
+async def test_project_page_ids_partial_binding(client, auth_headers):
+    """Привязка отдельных страниц: пост с проектом уходит только в выбранные
+    страницы, а не во все страницы аккаунта."""
+    r = await client.post("/api/web/accounts/connect", headers=auth_headers,
+                          json={"source_id": MOCK_SOURCE_ID,
+                                "credentials": {"nickname": "tester"}})
+    assert r.status_code == 200, r.text
+    pages = r.json()["pages"]
+    assert len(pages) == 3
+    chosen = sorted(p["id"] for p in pages[:2])
+
+    r1 = await client.post("/api/web/projects", headers=auth_headers,
+                           json={"name": "Частичный", "settings": {}, "page_ids": chosen})
+    assert r1.status_code == 201, r1.text
+    proj = r1.json()
+    assert sorted(proj["page_ids"]) == chosen
+    assert proj["account_ids"] == []  # аккаунтом целиком не привязан
+    proj_id = proj["id"]
+
+    # Несуществующая страница чужого пользователя не привязывается
+    r2 = await client.put(f"/api/web/projects/{proj_id}", headers=auth_headers,
+                          json={"name": "Частичный", "settings": {}, "page_ids": [999999]})
+    assert r2.status_code == 400
+
+    # Пост с проектом уходит ровно в выбранные страницы
+    r3 = await client.post("/api/web/posts", headers=auth_headers, json={
+        "publication_when_type": 2,
+        "publication_date": "2030-01-01T12:00:00",
+        "project_id": proj_id,
+        "page_ids": [],
+        "texts": [{"text": "Частичный пост в проект", "source_id": 0}],
+        "media_ids": [],
+        "status": "scheduled",
+    })
+    assert r3.status_code == 200, r3.text
+    target_pages = {t["page_id"] for t in r3.json()["targets"]}
+    assert target_pages == set(chosen)
+
+    # PUT с одним page_id сужает набор; PUT без page_ids не трогает его
+    one = [chosen[0]]
+    r4 = await client.put(f"/api/web/projects/{proj_id}", headers=auth_headers,
+                          json={"name": "Частичный", "settings": {}, "page_ids": one})
+    assert r4.status_code == 200
+    assert sorted(r4.json()["page_ids"]) == one
+    r5 = await client.put(f"/api/web/projects/{proj_id}", headers=auth_headers,
+                          json={"name": "Частичный 2", "settings": {}})
+    assert r5.status_code == 200
+    assert sorted(r5.json()["page_ids"]) == one

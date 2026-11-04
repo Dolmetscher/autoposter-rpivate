@@ -83,6 +83,8 @@ export interface Project {
   name: string
   settings: Record<string, unknown>
   account_ids?: number[]
+  // страницы, привязанные к проекту напрямую (без привязки аккаунта целиком)
+  page_ids?: number[]
 }
 
 export interface Schedule {

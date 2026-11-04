@@ -42,24 +42,27 @@ async def create_post(
     document_ids = document_ids or []
     page_ids = page_ids or []
 
-    # Пост с project_id публикуется и на страницы аккаунтов проекта.
+    # Пост с project_id публикуется и на страницы аккаунтов проекта, и на
+    # страницы, привязанные к проекту напрямую (project_pages).
     # Жадная загрузка: обращение к lazy-relationship в async-сессии
     # вне flush роняет запрос с MissingGreenlet.
     if project_id is not None:
         project = (await s.execute(
             select(Project)
-            .options(selectinload(Project.accounts).selectinload(SocialAccount.pages))
+            .options(selectinload(Project.accounts).selectinload(SocialAccount.pages),
+                     selectinload(Project.pages))
             .where(Project.id == project_id, Project.user_id == user.id)
         )).scalar_one_or_none()
         if project is None:
             raise ValueError(f"Project with id {project_id} not found")
-        # Страницы аккаунтов проекта (только те, куда можно публиковать)
+        # Страницы аккаунтов проекта + прямые страницы проекта
+        # (только те, куда можно публиковать)
         project_page_ids = {
             page.id
             for account in project.accounts
             for page in account.pages
             if page.can_post
-        }
+        } | {page.id for page in project.pages if page.can_post}
         # Объединяем с явно выбранными страницами
         page_ids = list({*page_ids, *project_page_ids})
 

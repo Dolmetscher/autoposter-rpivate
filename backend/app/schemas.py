@@ -172,6 +172,9 @@ class ProjectIn(BaseModel):
     # None — не менять привязку (PUT без поля сохраняет аккаунты проекта);
     # пустой список — явно отвязать все аккаунты.
     account_ids: list[int] | None = None
+    # Прямая привязка отдельных страниц (каналов/групп) — работает вместе
+    # с account_ids: при публикации берётся объединение. None — не менять.
+    page_ids: list[int] | None = None
 
 
 class ScheduleIn(BaseModel):

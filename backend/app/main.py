@@ -87,6 +87,8 @@ async def _cleanup_dangling(conn) -> None:
         ("crosspost_seen", "source_row_id NOT IN (SELECT id FROM crosspost_sources)"),
         ("project_accounts", "project_id NOT IN (SELECT id FROM projects)"),
         ("project_accounts", "social_account_id NOT IN (SELECT id FROM social_accounts)"),
+        ("project_pages", "project_id NOT IN (SELECT id FROM projects)"),
+        ("project_pages", "social_page_id NOT IN (SELECT id FROM social_pages)"),
     ]
     for table, cond in deletes:
         try:

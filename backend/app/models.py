@@ -14,6 +14,17 @@ project_accounts = Table(
     Column('social_account_id', Integer, ForeignKey('social_accounts.id'), primary_key=True)
 )
 
+# Прямая привязка проекта к отдельным страницам (канал/группа/профиль),
+# без привязки аккаунта целиком: у Telegram-аккаунта может быть 7 каналов,
+# из которых в проект нужны только два. Таблица новая — FK с CASCADE,
+# удаление страницы/проекта само чистит связку.
+project_pages = Table(
+    'project_pages',
+    Base.metadata,
+    Column('project_id', Integer, ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True),
+    Column('social_page_id', Integer, ForeignKey('social_pages.id', ondelete='CASCADE'), primary_key=True)
+)
+
 class User(Base):
     __tablename__ = "users"
 
@@ -110,6 +121,10 @@ class Project(Base):
 
     accounts: Mapped[list["SocialAccount"]] = relationship(
         secondary=project_accounts, back_populates="projects")
+    # Отдельные страницы проекта (в дополнение к страницам аккаунтов);
+    # при публикации берётся объединение обоих наборов
+    pages: Mapped[list["SocialPage"]] = relationship(
+        secondary=project_pages)
 
 
 class Schedule(Base):
