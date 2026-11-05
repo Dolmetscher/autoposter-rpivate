@@ -17,7 +17,7 @@ services:
       # предохранители слабого сервера
       MAX_MEDIA_SIZE_MB: ${MAX_MEDIA_SIZE_MB:-20}
       CROSSPOST_MAX_MEDIA_MB: ${CROSSPOST_MAX_MEDIA_MB:-15}
-      MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-30}
+      MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-7}
       TRANSCODE_ENABLED: ${TRANSCODE_ENABLED:-false}
       # биллинг (опционально)
       YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}

@@ -15,6 +15,7 @@ from ..models import (MediaFile, Post, PostAttachment, PostTarget, PostText,
                       PublicationLog, Schedule, SocialAccount, SocialPage, User, Project)
 from ..schemas import next_schedule_slot
 from ..util import utcnow
+from . import cleanup
 
 log = logging.getLogger("publish")
 
@@ -289,6 +290,27 @@ async def publish_post_now(s: AsyncSession, post: Post) -> Post:
         await notify.notify_publish_result(s, post)
     except Exception:
         log.warning("notify hook failed", exc_info=True)
+    # Агрессивная экономия диска: когда все цели опубликованы, медиа уже
+    # доставлены в сети и физические файлы больше не нужны — стираем их
+    # (запись о посте и тексты остаются). Повторные посты файлы сохраняют:
+    # медиа понадобится при следующей публикации.
+    if post.status == "published" and not post.repeat_type:
+        # Доставка через RSS-фид (Дзен) асинхронная: потребитель скачает
+        # медиа из фида ПОСЛЕ публикации — такие файлы не стираем.
+        rss_delivery = any(getattr(get_adapter(t.source_id), "rss_out", False)
+                           for t in post.targets)
+        if not rss_delivery:
+            try:
+                deleted, freed = await cleanup.purge_post_files(s, post)
+            except Exception:
+                log.exception("purge of published post files failed")
+            else:
+                if deleted:
+                    mb = freed / (1024 * 1024)
+                    size_txt = f"{mb:.1f} МБ" if mb >= 1 else f"{max(freed // 1024, 1)} КБ"
+                    add_log(s, post.user_id,
+                            f"Медиафайлы удалены с диска: {deleted} шт., освобождено {size_txt}",
+                            "info", post_id=post.id)
     return post
 
 

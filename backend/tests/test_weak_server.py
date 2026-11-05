@@ -45,20 +45,32 @@ async def test_cleanup_deletes_orphans_keeps_attached(client, auth_headers, mock
     from app.config import settings
     from app.services import cleanup as cleanup_service
 
-    # два файла: один старый-осиротевший, второй старый-прикреплённый к посту
+    # два файла: один старый-осиротевший, второй старый-прикреплённый
+    # к запланированному посту (файл опубликованного поста стирается сразу —
+    # см. test_disk_cleanup.py, поэтому пост тут именно запланированный)
     old = await client.post("/api/web/files/media/upload", headers=auth_headers,
                             files={"file": ("old.png", io.BytesIO(b"png1"), "image/png")})
     keep = await client.post("/api/web/files/media/upload", headers=auth_headers,
                              files={"file": ("keep.png", io.BytesIO(b"png2"), "image/png")})
     assert old.status_code == 200 and keep.status_code == 200
 
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.util import utcnow
+
+    when = (utcnow().replace(tzinfo=ZoneInfo("UTC"))
+            .astimezone(ZoneInfo("Europe/Moscow")) + timedelta(days=1)
+            ).strftime("%Y-%m-%dT%H:%M:%S")
     r = await client.post("/api/web/posts", headers=auth_headers, json={
         "texts": [{"text": "пост с медиа"}],
         "media_ids": [keep.json()["id"]],
         "page_ids": mock_pages[:1],
-        "publication_when_type": 1,
+        "publication_when_type": 2,
+        "publication_date": when,
     })
     assert r.status_code == 200
+    assert r.json()["status"] == "scheduled"
 
     from datetime import timedelta
 
