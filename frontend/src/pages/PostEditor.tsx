@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, getToken } from '../lib/api'
 import { useUserTz, zonedParts } from '../lib/tz'
+import MdTextarea from '../components/MdTextarea'
 import { Account, MediaFile, Post, Project, Schedule, SourceInfo, sourceColor, sourceName } from '../lib/types'
 
 interface Template {
@@ -289,8 +290,8 @@ export default function PostEditor({ sources, accounts }: Props) {
         <div>
           <div className="panel">
             <h3 style={{ marginTop: 0 }}>Текст</h3>
-            <textarea rows={7} value={text} placeholder="Текст поста для всех соцсетей…"
-                      onChange={(e) => setText(e.target.value)} />
+            <MdTextarea rows={7} value={text} placeholder="Текст поста для всех соцсетей…"
+                        onChange={setText} />
             <div className="row" style={{ marginTop: 8 }}>
               <input placeholder="Тема поста для AI-генерации…" value={aiTopic}
                      style={{ flex: 1 }}
@@ -313,12 +314,11 @@ export default function PostEditor({ sources, accounts }: Props) {
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
-                  <textarea rows={3} style={{ flex: 1 }} value={t.text}
-                            placeholder={`Текст только для ${sourceName(sources, t.source_id)}…`}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              setPerSource((p) => p.map((x, j) => (j === i ? { ...x, text: v } : x)))
-                            }} />
+                  <MdTextarea rows={3} style={{ flex: 1 }} value={t.text}
+                              placeholder={`Текст только для ${sourceName(sources, t.source_id)}…`}
+                              onChange={(v) => {
+                                setPerSource((p) => p.map((x, j) => (j === i ? { ...x, text: v } : x)))
+                              }} />
                   <button className="danger" onClick={() => setPerSource((p) => p.filter((_, j) => j !== i))}>✕</button>
                 </div>
               ))}
