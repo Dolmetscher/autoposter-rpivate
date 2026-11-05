@@ -1,12 +1,13 @@
 """Вордпресс: публикация постов через официальный REST API (wp-json) с
 Application Passwords (Пользователи → Приложения в админке WordPress).
-Фото/документы загружаются в медиатеку и прикрепляются к записи."""
+Фото/документы загружаются в медиатеку и прикрепляются к записи.
+Текст поддерживает HTML: Markdown рендерится (заголовки #/##, **жирный**,
+*курсив*, `код`, ссылки)."""
 from __future__ import annotations
-
-import html
 
 import httpx
 
+from ._mdfmt import md_to_plain, md_to_rich_html
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
 
 
@@ -14,6 +15,9 @@ class WordPressAdapter(SocialAdapter):
     source_id = 10
     name = "Вордпресс"
     capabilities = ("post", "photo", "document")
+    note = ("полная поддержка разметки Markdown: # заголовок, **жирный**, "
+            "*курсив*, __подчёркнутый__, ~~зачёркнутый~~, `код`, "
+            "[текст](ссылка) — публикуется HTML")
 
     def connect_requires(self) -> list[dict]:
         return [
@@ -68,12 +72,12 @@ class WordPressAdapter(SocialAdapter):
             if not text and not media_ids:
                 raise AdapterError("WP: пустой пост")
             lines = text.split("\n", 1)
-            title = lines[0].strip()[:100] or "Пост"
+            # Заголовок записи — первая строка без Markdown-маркеров; тело
+            # рендерится в HTML (# → h2, **жирный**, ссылки, `код`) —
+            # WordPress REST API хранит и отдает HTML как есть.
+            title = md_to_plain(lines[0]).strip()[:100] or "Пост"
             body = lines[1].strip() if len(lines) > 1 else ""
-            # Текст поста экранируем — иначе спецсимволы ломают HTML.
-            paragraphs = "".join(
-                f"<p>{html.escape(p.strip()).replace(chr(10), '<br/>')}</p>"
-                for p in body.split("\n\n") if p.strip())
+            paragraphs = md_to_rich_html(body)
             payload = {
                 "title": title,
                 "content": paragraphs,

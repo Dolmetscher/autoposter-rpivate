@@ -6,6 +6,7 @@ import logging
 
 import httpx
 
+from ._mdfmt import md_to_plain
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,9 @@ class FacebookAdapter(SocialAdapter):
     source_id = 3
     name = "Facebook"
     capabilities = ("post", "photo", "video")
+    note = ("форматирование текста API Facebook не поддерживает — "
+            "разметка Markdown аккуратно снимается, остаются чистый текст "
+            "и ссылки")
 
     def connect_requires(self) -> list[dict]:
         return [{"name": "access_token",
@@ -100,7 +104,7 @@ class FacebookAdapter(SocialAdapter):
                 r = await client.post(
                     f"{GRAPH}/{pid}/videos",
                     data={
-                        "description": content.text or "",
+                        "description": md_to_plain(content.text or ""),
                         "access_token": token,
                     },
                     files={"source": (vid_name, vid_bytes)}
@@ -114,7 +118,7 @@ class FacebookAdapter(SocialAdapter):
                 r = await client.post(
                     f"{GRAPH}/{pid}/photos",
                     data={
-                        "caption": (content.text or "")[:2200],
+                        "caption": md_to_plain(content.text or "")[:2200],
                         "access_token": token,
                     },
                     files={"source": (img_name, img_bytes)}
@@ -123,7 +127,7 @@ class FacebookAdapter(SocialAdapter):
                 if not content.text:
                     raise AdapterError("FB: пустой пост")
                 r = await client.post(f"{GRAPH}/{pid}/feed", data={
-                    "message": content.text,
+                    "message": md_to_plain(content.text or ""),
                     "access_token": token})
 
         try:

@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # опрос Telegram-бота-ассистента (сек)
     tg_bot_poll_seconds: int = 6
 
+    # Разметка Telegram Bot API: "html" (по умолчанию) или "MarkdownV2".
+    # На аккаунты (Telethon) не влияет — они всегда шлют HTML.
+    telegram_parse_mode: str = "html"
+
     # тарифы; price_month/price_year — суммы в рублях для биллинга (год = 10 месяцев)
     plans: dict = {
         "free": {"name": "Базовый", "accounts": 3, "posts_month": 100, "sources": 3,

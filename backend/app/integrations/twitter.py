@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from ..config import settings
+from ._mdfmt import md_to_plain
 from ._oauth1 import OAuth1Client
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
                    media_filename, read_media_bytes, read_media_bytes_to_file)
@@ -21,6 +22,8 @@ class TwitterAdapter(SocialAdapter):
     source_id = 4
     name = "Твиттер/X"
     capabilities = ("post", "photo", "video")
+    note = ("форматирование API Twitter/X не поддерживает — разметка "
+            "Markdown аккуратно снимается")
 
     def connect_requires(self) -> list[dict]:
         return [
@@ -131,7 +134,7 @@ class TwitterAdapter(SocialAdapter):
         for m in content.media:
             media_ids.append(await self._upload_media(client, m))
 
-        body = {"text": content.text}
+        body = {"text": md_to_plain(content.text or "")}
         if media_ids:
             body["media"] = {"media_ids": media_ids}
         r = await client.request_json("POST", f"{API2}/tweets", body=body)

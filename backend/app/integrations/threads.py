@@ -7,6 +7,7 @@ import asyncio
 
 import httpx
 
+from ._mdfmt import md_to_plain
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
 
 API = "https://graph.threads.net/v1.0"
@@ -16,6 +17,8 @@ class ThreadsAdapter(SocialAdapter):
     source_id = 12
     name = "Тредс"
     capabilities = ("post", "photo", "video")
+    note = ("лимит текста — 500 символов; форматирование API Threads не "
+            "поддерживает — разметка Markdown аккуратно снимается")
 
     def connect_requires(self) -> list[dict]:
         return [
@@ -77,8 +80,9 @@ class ThreadsAdapter(SocialAdapter):
             raise AdapterError("Threads: одно видео без других медиа на пост")
         if not content.text and not photos and not videos:
             raise AdapterError("Threads: пустой пост")
-        # Лимит текста поста Threads — 500 символов.
-        text = (content.text or "")[:500]
+        # Лимит текста поста Threads — 500 символов; форматирование не
+        # поддерживается — Markdown снимается.
+        text = md_to_plain(content.text or "")[:500]
 
         async with httpx.AsyncClient(timeout=120) as client:
             if videos:

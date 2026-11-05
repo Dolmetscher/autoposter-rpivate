@@ -23,6 +23,13 @@
 (imageId — объект, строка даёт illegal-argument). Файл грузится multipart
 (add-image, поле image); если сервер отказал (антиабуз/сбой) —
 add-image-from-url: сервер сам скачивает картинку по публичному URL.
+
+Markdown в постах Дзена: contentState — это Draft.js, поэтому **жирный**,
+*курсив*, __подчёркнутый__, ~~зачёркнутый~~ и [ссылки](url) передаются
+стандартными inlineStyleRanges (BOLD/ITALIC/UNDERLINE/STRIKETHROUGH) и
+LINK-сущностями. Заголовки # — строкой жирным (стили header-* в редакторе
+коротких постов не подтверждены), код — обычным текстом. Если редактор
+отклонит разметку — публикация автоматически уйдёт в RSS-фид.
 """
 from __future__ import annotations
 
@@ -35,6 +42,7 @@ import string
 
 import httpx
 
+from ._mdfmt import md_tokens
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome,
                    SocialAdapter, read_media_bytes, upload_filename)
 
@@ -63,24 +71,79 @@ def _block_key() -> str:
     return "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(5))
 
 
-def text_to_content_state(text: str, image_ids: list[str] | None = None) -> str:
-    """Текст поста (+ id картинок) → contentState редактора (дважды закодированный JSON).
+_DZEN_STYLE = {"bold": "BOLD", "italic": "ITALIC",
+              "under": "UNDERLINE", "strike": "STRIKETHROUGH"}
 
-    Внутри — состояние Draft.js (каждый абзац это блок "unstyled") и
-    галерея: элемент картинки — {"imageId": {"id": "<id>"}} (снято с
-    бандла редактора и подтверждено живой публикацией).
+
+def _md_blocks(text: str) -> tuple[list[dict], dict]:
+    """Markdown → (blocks, entityMap) Draft.js.
+
+    Жирный/курсив/подчёркнутый/зачёркнутый — стандартные inlineStyleRanges,
+    ссылки — LINK-сущности (entityRanges + entityMap), заголовки # — строка
+    целиком BOLD, код и блоки кода — обычный текст (без маркеров). Каждый
+    абзац — блок "unstyled" (перенос строки = новый блок).
     """
-    lines = [line.rstrip() for line in (text or "").split("\n")]
-    while lines and not lines[0].strip():
-        lines.pop(0)
-    while lines and not lines[-1].strip():
-        lines.pop()
-    if not lines:
-        lines = [""]
-    blocks = [{"data": {}, "depth": 0, "key": _block_key(), "type": "unstyled",
-               "text": line, "entityRanges": [], "inlineStyleRanges": []}
-              for line in lines]
-    content = json.dumps({"blocks": blocks, "entityMap": {}},
+    blocks: list[dict] = []
+    entity_map: dict[str, dict] = {}
+
+    def new_block() -> dict:
+        return {"data": {}, "depth": 0, "key": _block_key(), "type": "unstyled",
+                "text": "", "entityRanges": [], "inlineStyleRanges": []}
+
+    block = new_block()
+
+    def close() -> None:
+        nonlocal block
+        blocks.append(block)
+        block = new_block()
+
+    for tok in md_tokens(text or ""):
+        kind = tok[0]
+        if kind == "text" and tok[1] == "\n":
+            close()
+            continue
+        if kind == "fence":
+            for i, line in enumerate(tok[1].split("\n")):
+                if i:
+                    close()
+                block["text"] += line
+            close()
+            continue
+        payload = tok[1]
+        offset = len(block["text"])
+        block["text"] += payload
+        if kind in _DZEN_STYLE:
+            block["inlineStyleRanges"].append(
+                {"offset": offset, "length": len(payload),
+                 "style": _DZEN_STYLE[kind]})
+        elif kind == "head":
+            block["inlineStyleRanges"].append(
+                {"offset": offset, "length": len(payload), "style": "BOLD"})
+        elif kind == "link":
+            key = str(len(entity_map))
+            entity_map[key] = {"type": "LINK", "mutability": "MUTABLE",
+                               "data": {"url": tok[2]}}
+            block["entityRanges"].append(
+                {"offset": offset, "length": len(payload), "key": int(key)})
+    close()
+    while blocks and not blocks[-1]["text"].strip():
+        blocks.pop()
+    while len(blocks) > 1 and not blocks[0]["text"].strip():
+        blocks.pop(0)
+    return (blocks or [new_block()]), entity_map
+
+
+def text_to_content_state(text: str, image_ids: list[str] | None = None) -> str:
+    """Текст поста (Markdown, + id картинок) → contentState редактора
+    (дважды закодированный JSON).
+
+    Внутри — состояние Draft.js (разметка Markdown → стили и LINK-сущности,
+    каждый абзац это блок "unstyled") и галерея: элемент картинки —
+    {"imageId": {"id": "<id>"}} (снято с бандла редактора и подтверждено
+    живой публикацией).
+    """
+    blocks, entity_map = _md_blocks(text)
+    content = json.dumps({"blocks": blocks, "entityMap": entity_map},
                          ensure_ascii=False, separators=(",", ":"))
     state = {"gallery": {"ratio": "ratio-4x3", "baseRatio": "ratio-4x3",
                          "items": [{"imageId": {"id": i}} for i in (image_ids or [])]},
@@ -123,7 +186,9 @@ class DzenAdapter(SocialAdapter):
     note = ("короткие тексты (до 4096 символов) с фотографиями публикуются постом "
             "сразу — экспериментально, нужны cookie сессии и ссылка на канал; "
             "длинные тексты, видео и документы — через RSS-фид проекта "
-            "(официальная «трансляция», появляются статьёй)")
+            "(официальная «трансляция», появляются статьёй). Разметка "
+            "Markdown применяется: **жирный**, *курсив*, __подчёркнутый__, "
+            "~~зачёркнутый~~, [текст](ссылка), # заголовок")
 
     def connect_requires(self) -> list[dict]:
         return [

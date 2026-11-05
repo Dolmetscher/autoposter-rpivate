@@ -108,8 +108,8 @@ async def test_post_publishes_into_dzen_feed(client, auth_headers):
     assert "Первый пост в Дзен" in xml
     assert 'guid isPermaLink="false">autoposter-post-' in xml
     assert "<content:encoded>" in xml
-    assert "<p>Первый пост в Дзен</p>" in xml
-    assert "<p>Вторая строка</p>" in xml
+    # Markdown-рендер фида: перенос строки → <br/> внутри абзаца
+    assert "<p>Первый пост в Дзен<br/>Вторая строка</p>" in xml
     assert 'type="image/png"' in xml
     assert "/media/" in xml  # публичная ссылка на фото
 

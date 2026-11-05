@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import httpx
 
+from ._mdfmt import md_to_plain
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem
 
 API = "https://api.rutube.ru"
@@ -15,7 +16,8 @@ class RutubeAdapter(SocialAdapter):
     name = "Рутуб"
     capabilities = ("video",)
     note = ("экспериментальная интеграция: API-токен выдаёт поддержка Rutube "
-            "по запросу через rutube.ru/feedback")
+            "по запросу через rutube.ru/feedback; форматирование описания API "
+            "не поддерживает — разметка Markdown аккуратно снимается")
 
     def connect_requires(self) -> list[dict]:
         return [{"name": "token",
@@ -45,7 +47,7 @@ class RutubeAdapter(SocialAdapter):
             raise AdapterError("Рутуб: публикация требует видеофайл")
         if len(videos) > 1:
             raise AdapterError("Рутуб: одно видео на публикацию")
-        text = content.text or ""
+        text = md_to_plain(content.text or "")
         # Заголовок видео приоритетнее строки поста; если его нет — берём первую
         # строку текста, иначе имя файла.
         title = (videos[0].title

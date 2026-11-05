@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 
 from ..config import settings
+from ._mdfmt import md_to_plain
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, SourceItem, read_media_bytes_to_file
 
 
@@ -17,6 +18,8 @@ class YouTubeAdapter(SocialAdapter):
     source_id = 17
     name = "YouTube"
     capabilities = ("video", "shorts")
+    note = ("описание до 5000 символов; форматирование API YouTube не "
+            "поддерживает — разметка Markdown аккуратно снимается")
 
     async def _token(self, creds: dict) -> str:
         if creds.get("access_token") and not creds.get("refresh_token"):
@@ -72,7 +75,7 @@ class YouTubeAdapter(SocialAdapter):
 
         token = await self._token(page.account.credentials)
         # Лимит описания YouTube — 5000 символов, лишнее приведёт к ошибке API.
-        text = (content.text or "")[:5000]
+        text = md_to_plain(content.text or "")[:5000]
         title = video.title or (text.splitlines()[0] if text else video.name)
         title = title[:100]
         # YouTube сам распознаёт Shorts (вертикальное видео до 3 минут);

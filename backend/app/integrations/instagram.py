@@ -7,6 +7,7 @@ import asyncio
 import httpx
 
 from ..config import settings
+from ._mdfmt import md_to_plain
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
 
 GRAPH = "https://graph.facebook.com/v21.0"
@@ -16,6 +17,8 @@ class InstagramAdapter(SocialAdapter):
     source_id = 6
     name = "Instagram"
     capabilities = ("post", "photo", "video", "reel", "story")
+    note = ("форматирование подписей API Instagram не поддерживает — "
+            "разметка Markdown аккуратно снимается")
 
     def connect_requires(self) -> list[dict]:
         return [
@@ -64,7 +67,7 @@ class InstagramAdapter(SocialAdapter):
         photos = [m for m in content.media if m.type == "photo"]
         videos = [m for m in content.media if m.type == "video"]
         # Лимит подписи Instagram — 2200 символов, лишнее приведёт к ошибке API.
-        caption = (content.text or "")[:2200]
+        caption = md_to_plain(content.text or "")[:2200]
 
         async with httpx.AsyncClient(timeout=120) as client:
             creation_id = None

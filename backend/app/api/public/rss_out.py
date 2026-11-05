@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from ...config import settings
 from ...db import get_session
+from ...integrations._mdfmt import md_to_plain, md_to_rich_html
 from ...models import Post, PostAttachment, Project
 from ...util import utcnow
 
@@ -37,11 +38,12 @@ def _cdata(text: str) -> str:
 
 
 def _text_to_html(text: str) -> str:
-    """Текст поста → HTML-абзацы (текст хранится как plain text)."""
-    paragraphs = [p.strip() for p in (text or "").split("\n") if p.strip()]
-    return "\n".join(
-        f"<p>{html.escape(p).replace(chr(10), '<br/>')}</p>" for p in paragraphs
-    ) if paragraphs else ""
+    """Текст поста (Markdown) → HTML для content:encoded.
+
+    Дзен забирает материалы из фида с форматированием: **жирный**,
+    *курсив*, # заголовок, [ссылки](url) рендерятся в HTML.
+    """
+    return md_to_rich_html(text or "")
 
 
 def _item_title(post: Post) -> str:
@@ -49,7 +51,7 @@ def _item_title(post: Post) -> str:
     for line in (post.texts[0].text if post.texts else "").splitlines():
         line = line.strip()
         if line:
-            return line[:120]
+            return md_to_plain(line)[:120]
     for att in post.attachments:
         name = (att.media_file.title or att.media_file.name or "").strip()
         if name:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 
+from ._mdfmt import md_to_plain
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
 
 API = "https://open.tiktokapis.com/v2"
@@ -13,6 +14,8 @@ class TikTokAdapter(SocialAdapter):
     source_id = 14
     name = "TikTok"
     capabilities = ("video", "photo")
+    note = ("форматирование API TikTok не поддерживает — разметка Markdown "
+            "аккуратно снимается")
 
     def connect_requires(self) -> list[dict]:
         return [{"name": "access_token", "label": "Access token TikTok (user.access_token)",
@@ -47,7 +50,7 @@ class TikTokAdapter(SocialAdapter):
             if videos:
                 body = {
                     "post_info": {
-                        "title": (content.text or "")[:2200],
+                        "title": md_to_plain(content.text or "")[:2200],
                         "privacy_level": privacy,
                         "disable_duet": bool(st.get("disable_duet")),
                         "disable_comment": bool(st.get("disable_comments")),
@@ -61,7 +64,7 @@ class TikTokAdapter(SocialAdapter):
             elif photos:
                 body = {
                     "post_info": {
-                        "title": (content.text or "")[:2200],
+                        "title": md_to_plain(content.text or "")[:2200],
                         "privacy_level": privacy,
                         "disable_comment": bool(st.get("disable_comments")),
                     },

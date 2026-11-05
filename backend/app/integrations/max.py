@@ -1,10 +1,13 @@
 """Макс (мессенджер MAX): официальный Bot API — platform-api2.max.ru.
 Бот подключается токеном; страницы — его групповые чаты и каналы (GET /chats).
-Медиа загружается через POST /uploads, отправка — POST /messages."""
+Медиа загружается через POST /uploads, отправка — POST /messages.
+Текст отправляется с format=markdown: **жирный**, *курсив*,
+++подчёркнутый++, ~~зачёркнутый~~, `код`, ссылки, # заголовок."""
 from __future__ import annotations
 
 import httpx
 
+from ._mdfmt import md_to_max_markdown
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
 
 API = "https://platform-api2.max.ru"
@@ -16,6 +19,9 @@ class MaxAdapter(SocialAdapter):
     source_id = 22
     name = "Макс"
     capabilities = ("post", "photo", "video", "document", "channel", "chat")
+    note = ("поддерживается родная разметка MAX Markdown (format=markdown): "
+            "**жирный**, *курсив*, ++подчёркнутый++, ~~зачёркнутый~~, `код`, "
+            "[текст](ссылка), # заголовок")
 
     def connect_requires(self) -> list[dict]:
         return [{"name": "access_token", "label": "Токен бота MAX (business.max.ru)",
@@ -78,8 +84,9 @@ class MaxAdapter(SocialAdapter):
             r = await client.post(f"{API}/messages",
                                   params={"chat_id": page.social_page_id},
                                   headers=self._headers(token),
-                                  json={"text": content.text or "",
-                                        "attachments": attachments})
+                                  json={"text": md_to_max_markdown(content.text or ""),
+                                        "attachments": attachments,
+                                        "format": "markdown"})
         if r.status_code >= 300:
             raise AdapterError(f"Макс: {r.text[:200]}")
         data = r.json()

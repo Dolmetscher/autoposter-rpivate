@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 
+from ._mdfmt import md_to_plain
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
 
 API = "https://api.pinterest.com/v5"
@@ -13,6 +14,8 @@ class PinterestAdapter(SocialAdapter):
     source_id = 8
     name = "Пинтерест"
     capabilities = ("post", "photo", "video")
+    note = ("описание до 500 символов; форматирование API Pinterest не "
+            "поддерживает — разметка Markdown аккуратно снимается")
 
     def connect_requires(self) -> list[dict]:
         return [{"name": "access_token", "label": "Access token Pinterest (pins:write)",
@@ -53,7 +56,7 @@ class PinterestAdapter(SocialAdapter):
         else:
             media_source = {"source_type": "image_url",
                             "url": content.public_url(photos[0].file_path)}
-        text = content.text or ""
+        text = md_to_plain(content.text or "")
         title = text.splitlines()[0][:100] if text else "Пин"
         body = {
             "board_id": page.social_page_id,

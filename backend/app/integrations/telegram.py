@@ -4,6 +4,11 @@
 Markdown в тексте постов рендерится в HTML (parse_mode=HTML) у ботов и
 через Telethon; каждый кусок (подпись/части длинного текста) рендерится
 отдельно, поэтому битая/разрезанная разметка не ломает отправку.
+
+Для Bot API можно включить MarkdownV2 (TELEGRAM_PARSE_MODE=MarkdownV2):
+сущности те же, но всё вне разметки экранируется, а лимиты подписи/куска
+берутся с запасом — Telethon (аккаунты) MarkdownV2 не умеет и всегда шлёт
+HTML.
 """
 from __future__ import annotations
 
@@ -13,9 +18,26 @@ import re
 
 import httpx
 
-from ._mdfmt import md_to_plain, md_to_telegram_html
+from ..config import settings
+from ._mdfmt import md_to_plain, md_to_telegram_html, md_to_telegram_markdownv2
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
                    SourceItem, media_filename, read_media_bytes)
+
+# Режим разметки Bot API: html (по умолчанию — устойчив к ошибкам) или
+# MarkdownV2 (переменная окружения TELEGRAM_PARSE_MODE=MarkdownV2).
+_MODE = (settings.telegram_parse_mode or "html").strip().lower()
+_MDV2 = _MODE in ("markdownv2", "markdown_v2", "mdv2")
+_PARSE_MODE = "MarkdownV2" if _MDV2 else "HTML"
+# В MarkdownV2 экранирование раздувает текст (каждый «. ! - + …» добавляет "\"),
+# поэтому лимиты подписи и куска берём с запасом — собранное сообщение
+# не должно превысить лимиты API (1024/4096).
+_CAP_LIMIT = 512 if _MDV2 else 1024
+_CHUNK_SIZE = 2048 if _MDV2 else 4096
+
+
+def _md_tg(text: str) -> str:
+    """Markdown → разметка для Bot API (HTML или MarkdownV2 по настройке)."""
+    return md_to_telegram_markdownv2(text) if _MDV2 else md_to_telegram_html(text)
 
 
 def _named(data: bytes, name: str) -> io.BytesIO:
@@ -128,9 +150,9 @@ class TelegramAdapter(SocialAdapter):
         # первая часть идёт подписью, а остаток публикуется отдельными сообщениями.
         # Каждый кусок рендерится из исходного текста отдельно — незакрытые
         # маркеры остаются простым текстом и не ломают разбор HTML.
-        caption_src = full_text[:1024]
-        caption_rest = full_text[1024:]
-        caption = md_to_telegram_html(caption_src)
+        caption_src = full_text[:_CAP_LIMIT]
+        caption_rest = full_text[_CAP_LIMIT:]
+        caption = _md_tg(caption_src)
 
         gallery = [(_named(await read_media_bytes(m), media_filename(m, "media")), m.type)
                    for m in content.media]
@@ -146,7 +168,7 @@ class TelegramAdapter(SocialAdapter):
                     field = {"photo": "photo", "video": "video"}.get(mtype, "document")
                     r = await client.post(f"{base}/{method}",
                                           data={"chat_id": chat, "caption": caption,
-                                                "parse_mode": "HTML",
+                                                "parse_mode": _PARSE_MODE,
                                                 "disable_web_page_preview": not link_preview},
                                           files={field: (bio.name, bio)})
                     message_id = self._tg_ok(method, r)["message_id"]
@@ -157,7 +179,7 @@ class TelegramAdapter(SocialAdapter):
                         entry = {"type": mtype, "media": f"attach://file{i}"}
                         if i == 0 and caption:
                             entry["caption"] = caption
-                            entry["parse_mode"] = "HTML"
+                            entry["parse_mode"] = _PARSE_MODE
                         media_group.append(entry)
                     r = await client.post(f"{base}/sendMediaGroup",
                                           data={"chat_id": chat,
@@ -177,7 +199,7 @@ class TelegramAdapter(SocialAdapter):
                     data = {"chat_id": chat}
                     if i == 0:
                         data["caption"] = caption
-                        data["parse_mode"] = "HTML"
+                        data["parse_mode"] = _PARSE_MODE
                         data["disable_web_page_preview"] = not link_preview
                     r = await client.post(f"{base}/sendDocument", data=data,
                                           files={"document": (bio.name, bio)})
@@ -216,12 +238,12 @@ class TelegramAdapter(SocialAdapter):
         лимит считается по видимому тексту, а разрезанные маркеры просто
         остаются текстом и не ломают parse_mode. Возвращает ID последнего сообщения."""
         last_id = None
-        chunk_size = 4096
+        chunk_size = _CHUNK_SIZE
         start = 0
         while start < len(text):
             chunk = text[start:start + chunk_size]
-            data = {"chat_id": chat, "text": md_to_telegram_html(chunk),
-                    "parse_mode": "HTML",
+            data = {"chat_id": chat, "text": _md_tg(chunk),
+                    "parse_mode": _PARSE_MODE,
                     "disable_web_page_preview": not link_preview}
             if reply_to is not None:
                 data["reply_to_message_id"] = reply_to

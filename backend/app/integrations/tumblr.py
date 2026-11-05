@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 
+from ._mdfmt import md_to_rich_html
 from ._oauth1 import OAuth1Client, oauth1_header
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
 
@@ -14,6 +15,9 @@ class TumblrAdapter(SocialAdapter):
     source_id = 19
     name = "Тамблер"
     capabilities = ("post", "photo")
+    note = ("текст и подписи принимают HTML — разметка Markdown рендерится: "
+            "**жирный**, *курсив*, __подчёркнутый__, ~~зачёркнутый~~, "
+            "`код`, [текст](ссылка), # заголовок")
 
     def connect_requires(self) -> list[dict]:
         return [
@@ -66,12 +70,13 @@ class TumblrAdapter(SocialAdapter):
             files = [(f"data[{i}]", (p.name or "photo.jpg", await read_media_bytes(p)))
                      for i, p in enumerate(photos[:10])]
             async with httpx.AsyncClient(timeout=300) as http:
-                r = await http.post(url, data={"type": "photo", "caption": text},
+                r = await http.post(url, data={"type": "photo",
+                                               "caption": md_to_rich_html(text)},
                                     files=files, headers={"Authorization": header})
         else:
             client = OAuth1Client(creds, timeout=60)
             r = await client.request("POST", url,
-                                     data={"type": "text", "body": text})
+                                     data={"type": "text", "body": md_to_rich_html(text)})
         if r.status_code >= 300:
             raise AdapterError(f"Tumblr post: {r.text[:200]}")
         data = r.json()

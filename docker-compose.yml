@@ -19,6 +19,8 @@ services:
       CROSSPOST_MAX_MEDIA_MB: ${CROSSPOST_MAX_MEDIA_MB:-15}
       MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-7}
       TRANSCODE_ENABLED: ${TRANSCODE_ENABLED:-false}
+      # разметка Telegram Bot API: html (по умолчанию) или MarkdownV2
+      TELEGRAM_PARSE_MODE: ${TELEGRAM_PARSE_MODE:-html}
       # биллинг (опционально)
       YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
       YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}

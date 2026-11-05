@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import httpx
 
+from ._mdfmt import md_to_plain
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
 
 API = "https://api.linkedin.com"
@@ -16,6 +17,8 @@ class LinkedInAdapter(SocialAdapter):
     source_id = 13
     name = "ЛинкедИн"
     capabilities = ("post",)
+    note = ("только текст (до 3000 символов); форматирование API LinkedIn не "
+            "поддерживает — разметка Markdown аккуратно снимается")
 
     def connect_requires(self) -> list[dict]:
         return [{"name": "access_token",
@@ -51,7 +54,7 @@ class LinkedInAdapter(SocialAdapter):
         body = {
             "author": author,
             # Лимит текста поста LinkedIn — 3000 символов.
-            "commentary": (content.text or "")[:3000],
+            "commentary": md_to_plain(content.text or "")[:3000],
             "visibility": "PUBLIC",
             "distribution": {
                 "feedDistribution": "MAIN_FEED",
