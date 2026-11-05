@@ -30,10 +30,12 @@ interface Props {
   rows?: number
   placeholder?: string
   style?: React.CSSProperties
+  /** Файлы, вставленные из буфера (скриншот → Ctrl+V). */
+  onFiles?: (files: File[]) => void
 }
 
 /** Textarea со всплывающим меню Markdown: выделили текст — появилось меню. */
-export default function MdTextarea({ value, onChange, rows, placeholder, style }: Props) {
+export default function MdTextarea({ value, onChange, rows, placeholder, style, onFiles }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -97,6 +99,16 @@ export default function MdTextarea({ value, onChange, rows, placeholder, style }
     }
   }, [menu, hide])
 
+  // Вставка из буфера: если там файлы (скриншот, скопированная картинка) —
+  // отдаём их наружу и не вставляем ничего в текст.
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!onFiles) return
+    const files = Array.from(e.clipboardData?.files ?? [])
+    if (!files.length) return
+    e.preventDefault()
+    onFiles(files)
+  }
+
   const apply = (cmd: MdCmd) => {
     const ta = taRef.current
     if (!ta) return
@@ -117,6 +129,7 @@ export default function MdTextarea({ value, onChange, rows, placeholder, style }
         placeholder={placeholder}
         style={{ width: '100%' }}
         onChange={(e) => onChange(e.target.value)}
+        onPaste={onPaste}
         onMouseDown={() => { mouse.current = null }}
         onMouseUp={(e) => {
           mouse.current = { x: e.clientX, y: e.clientY }

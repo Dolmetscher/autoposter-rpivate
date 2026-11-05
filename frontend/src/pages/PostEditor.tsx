@@ -13,6 +13,18 @@ interface Template {
   settings: Record<string, unknown>
 }
 
+// Файл, вставленный из буфера (скриншот приходит как безымянный "image.png"),
+// получает вразумительное имя: «вставка-20261106-153045.png».
+const pasteName = (f: File): File => {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  const ts = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  const ext = f.name.match(/\.[a-z0-9]+$/i)?.[0]
+    || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' } as Record<string, string>)[f.type]
+    || '.png'
+  return new File([f], `вставка-${ts}${ext}`, { type: f.type, lastModified: f.lastModified })
+}
+
 interface Props {
   sources: SourceInfo[]
   accounts: Account[]
@@ -47,6 +59,7 @@ export default function PostEditor({ sources, accounts }: Props) {
   const [linkPreview, setLinkPreview] = useState(true)
   const [busy, setBusy] = useState(false)
   const [busyT, setBusyT] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(editing)
   const tz = useUserTz()
@@ -90,7 +103,7 @@ export default function PostEditor({ sources, accounts }: Props) {
     })
   }, [editing, id, tz])
 
-  const upload = async (files: FileList | null, kind: 'media' | 'doc') => {
+  const upload = async (files: FileList | File[] | null, kind: 'media' | 'doc') => {
     if (!files) return
     for (const f of Array.from(files)) {
       try {
@@ -291,7 +304,8 @@ export default function PostEditor({ sources, accounts }: Props) {
           <div className="panel">
             <h3 style={{ marginTop: 0 }}>Текст</h3>
             <MdTextarea rows={7} value={text} placeholder="Текст поста для всех соцсетей…"
-                        onChange={setText} />
+                        onChange={setText}
+                        onFiles={(files) => upload(files.map(pasteName), 'media')} />
             <div className="row" style={{ marginTop: 8 }}>
               <input placeholder="Тема поста для AI-генерации…" value={aiTopic}
                      style={{ flex: 1 }}
@@ -318,7 +332,8 @@ export default function PostEditor({ sources, accounts }: Props) {
                               placeholder={`Текст только для ${sourceName(sources, t.source_id)}…`}
                               onChange={(v) => {
                                 setPerSource((p) => p.map((x, j) => (j === i ? { ...x, text: v } : x)))
-                              }} />
+                              }}
+                              onFiles={(files) => upload(files.map(pasteName), 'media')} />
                   <button className="danger" onClick={() => setPerSource((p) => p.filter((_, j) => j !== i))}>✕</button>
                 </div>
               ))}
@@ -344,7 +359,15 @@ export default function PostEditor({ sources, accounts }: Props) {
             </label>
           </div>
 
-          <div className="panel">
+          <div className="panel"
+               onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+               onDragLeave={() => setDragOver(false)}
+               onDrop={(e) => {
+                 e.preventDefault()
+                 setDragOver(false)
+                 upload(e.dataTransfer.files, 'media')
+               }}
+               style={dragOver ? { outline: '2px dashed var(--primary)', outlineOffset: -6 } : undefined}>
             <div className="between">
               <h3 style={{ margin: 0 }}>Фото, видео, документы</h3>
               <div className="row">
@@ -368,7 +391,9 @@ export default function PostEditor({ sources, accounts }: Props) {
               ))}
             </div>
             {media.length === 0 && docs.length === 0 && (
-              <div className="empty" style={{ padding: '16px 0' }}>Перетащите файлы через кнопку загрузки</div>
+              <div className="empty" style={{ padding: '16px 0' }}>
+                Перетащите файлы сюда, выберите кнопкой или вставьте скриншот через Ctrl+V
+              </div>
             )}
             {media.some((m) => m.type === 'video') && (
               <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
