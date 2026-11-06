@@ -1,16 +1,28 @@
 """Threads (Meta): текст, фото, видео и карусели через Threads API
-(graph.threads.net). Нужен access token приложения с правом
-threads_basic/threads_content_publish и Threads User ID."""
+(graph.threads.com). Нужен access token приложения с правом
+threads_basic/threads_content_publish и Threads User ID.
+
+Долгоживущий токен живёт 60 дней, поэтому адаптер сам продлевает его перед
+публикацией (refresh_access_token), пока токен ещё действует."""
 from __future__ import annotations
 
 import asyncio
+import logging
+from datetime import datetime, timedelta
 
 import httpx
 
+from ..util import utcnow
 from ._mdfmt import md_to_plain
 from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter
 
-API = "https://graph.threads.net/v1.0"
+API = "https://graph.threads.com/v1.0"
+
+log = logging.getLogger("threads")
+
+# Продлеваем токен заранее, когда ему больше 20 дней (живёт 60, продлевать
+# можно пока не истёк — успеваем многократно при регулярных публикациях).
+TOKEN_REFRESH_AFTER_DAYS = 20
 
 
 class ThreadsAdapter(SocialAdapter):
@@ -34,6 +46,10 @@ class ThreadsAdapter(SocialAdapter):
         uid = creds.get("threads_user_id")
         if not (token and uid):
             raise AdapterError("Threads: нужны access_token и threads_user_id")
+        # фиксируем момент подключения/обновления токена — от него отсчитывается
+        # автопродление (см. refresh_long_lived_token)
+        if not creds.get("token_updated_at"):
+            account.credentials = {**creds, "token_updated_at": utcnow().isoformat()}
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.get(f"{API}/{uid}",
                                  params={"fields": "username,threads_profile_picture_url",
@@ -43,6 +59,48 @@ class ThreadsAdapter(SocialAdapter):
             raise AdapterError(f"Threads: {data['error'].get('message')}")
         return [PageInfo(str(uid), f"@{data.get('username', uid)}",
                  data.get("threads_profile_picture_url", ""), kind="user")]
+
+    async def refresh_long_lived_token(self, account) -> dict | None:  # noqa: ANN001
+        """Автопродление долгоживущего токена (60 дней), пока он ещё действует.
+
+        GET /refresh_access_token?grant_type=th_refresh_token — официальный
+        способ продления. Если токен уже истёк, продлить нельзя: возвращаем
+        None, публикация покажет ошибку API и нужен новый токен."""
+        creds = dict(account.credentials or {})
+        token = creds.get("access_token")
+        if not token:
+            return None
+        updated = creds.get("token_updated_at")
+        if updated:
+            try:
+                age = utcnow() - datetime.fromisoformat(str(updated))
+                if age < timedelta(days=TOKEN_REFRESH_AFTER_DAYS):
+                    return None  # токен свежий — продлевать рано
+            except ValueError:
+                pass  # битая дата — пробуем продлить
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get("https://graph.threads.com/refresh_access_token",
+                                     params={"grant_type": "th_refresh_token",
+                                             "access_token": token})
+                data = r.json() or {}
+        except Exception:
+            log.warning("Threads: не удалось продлить токен аккаунта %s",
+                        getattr(account, "id", "?"), exc_info=True)
+            return None
+        new_token = data.get("access_token")
+        if not new_token:
+            # токен истёк/невалиден — продлению не подлежит
+            log.warning("Threads: продление токена аккаунта %s не состоялось: %s",
+                        getattr(account, "id", "?"),
+                        (data.get("error") or {}).get("message") or data)
+            return None
+        creds["access_token"] = new_token
+        creds["token_updated_at"] = utcnow().isoformat()
+        expires_in = data.get("expires_in")
+        if isinstance(expires_in, (int, float)):
+            creds["token_expires_at"] = (utcnow() + timedelta(seconds=expires_in)).isoformat()
+        return creds
 
     async def _container(self, client: httpx.AsyncClient, token: str, uid: str,
                          params: dict) -> str:

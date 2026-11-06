@@ -159,6 +159,15 @@ class SocialAdapter(ABC):
     async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
         raise AdapterError(f"{self.name}: удаление не поддерживается")
 
+    # --- продление токенов ---
+    async def refresh_long_lived_token(self, account) -> dict | None:  # noqa: ANN001
+        """Продлить долгоживущий токен аккаунта, если сеть это умеет.
+
+        Вызывается конвейером перед публикацией. Возвращает обновлённые
+        credentials (конвейер сохранит их зашифрованными) или None, когда
+        продлевать не нужно/не удалось."""
+        return None
+
     # --- кросспостинг ---
     async def fetch_source_items(self, source_ref: str, limit: int = 10,
                                  account=None) -> list[SourceItem]:  # noqa: ANN001

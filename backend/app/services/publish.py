@@ -218,6 +218,16 @@ async def publish_target(s: AsyncSession, post: Post, target: PostTarget) -> Non
     target.attempts += 1
     await s.flush()
     try:
+        # Сети с долгоживущими токенами (Threads: 60 дней) продлевают токен
+        # перед публикацией — свежие credentials сохранятся вместе с тиком.
+        try:
+            fresh_creds = await adapter.refresh_long_lived_token(page.account)
+        except Exception:
+            log.warning("token refresh failed for account %s",
+                        page.account_id, exc_info=True)
+            fresh_creds = None
+        if fresh_creds:
+            page.account.credentials = fresh_creds
         content = build_content(post, target.source_id)
         if not adapter.handles_link:
             # Сеть не умеет публиковать ссылку сама — дописываем её в текст,
