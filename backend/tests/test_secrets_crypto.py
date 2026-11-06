@@ -28,6 +28,34 @@ def test_decrypt_failure_counter(monkeypatch):
     crypto._fernet = None  # не оставлять тестовый ключ в глобальном состоянии
 
 
+def test_decrypt_warn_once_with_context(monkeypatch, caplog):
+    """Предупреждение пишется один раз на поле (users.llm_config читается при
+    каждом запросе — иначе лог захламляется), но счётчик растёт всегда."""
+    import logging
+
+    from app.services import crypto
+
+    crypto._fernet = None
+    monkeypatch.setattr(crypto.settings, "credentials_secret", "key-one")
+    enc = crypto.encrypt_value({"api_key": "sk"})
+    monkeypatch.setattr(crypto.settings, "credentials_secret", "key-two")
+    crypto._fernet = None
+
+    with caplog.at_level(logging.WARNING, logger="crypto"):
+        crypto.decrypt_value(enc, "users.llm_config")
+        crypto.decrypt_value(enc, "users.llm_config")
+        crypto.decrypt_value(enc, "social_accounts.credentials")
+    warnings = [r for r in caplog.records if "users.llm_config" in r.message]
+    assert len(warnings) == 1  # одно на контекст
+    assert any("social_accounts.credentials" in r.message for r in caplog.records)
+    assert crypto.decrypt_failures() >= 3  # считаются все неудачи, не только залогированные
+
+    # пересохранение секрета снова разрешает предупреждения
+    crypto.encrypt_value({"api_key": "sk2"})
+    assert crypto._warned == set()
+    crypto._fernet = None
+
+
 async def test_accounts_secrets_flag_ok(client, auth_headers, mock_pages):
     r = await client.get("/api/web/accounts", headers=auth_headers)
     assert r.status_code == 200, r.text

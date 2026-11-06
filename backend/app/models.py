@@ -33,7 +33,8 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
     plan: Mapped[str] = mapped_column(String(32), default="free")
-    llm_config: Mapped[dict] = mapped_column(EncryptedJSON, default=dict)
+    llm_config: Mapped[dict] = mapped_column(
+        EncryptedJSON(label="users.llm_config"), default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     accounts: Mapped[list["SocialAccount"]] = relationship(back_populates="user")
@@ -58,7 +59,8 @@ class UserSettings(Base):
     __tablename__ = "user_settings"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    data: Mapped[dict] = mapped_column(EncryptedJSON, default=dict)
+    data: Mapped[dict] = mapped_column(
+        EncryptedJSON(label="user_settings.data"), default=dict)
 
 
 class ApiToken(Base):
@@ -78,7 +80,8 @@ class SocialAccount(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     source_id: Mapped[int] = mapped_column(Integer, index=True)
-    credentials: Mapped[dict] = mapped_column(EncryptedJSON, default=dict)  # токены/сессии сети (шифруются)
+    credentials: Mapped[dict] = mapped_column(
+        EncryptedJSON(label="social_accounts.credentials"), default=dict)  # токены/сессии сети (шифруются)
     extra: Mapped[dict] = mapped_column(JSON, default=dict)  # доп. параметры подключения
     social_account_id: Mapped[str] = mapped_column(String(128), default="")
     social_account_name: Mapped[str] = mapped_column(String(255), default="")
