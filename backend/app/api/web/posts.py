@@ -229,7 +229,11 @@ async def update_post(post_id: int, payload: PostIn, request: Request,
             if t not in keep_targets:
                 await s.delete(t)
         existing_pages = published | {t.page_id for t in keep_targets}
-        for pid in payload.page_ids:
+        # Проект разворачивается в страницы и здесь, как при создании:
+        # правка поста с проектом и без галочек не должна опустошать цели
+        page_ids = await publish_service.expand_project_page_ids(
+            s, user, payload.project_id, payload.page_ids)
+        for pid in page_ids:
             if pid in existing_pages:
                 continue
             page = (await s.execute(select(SocialPage).where(
@@ -310,6 +314,8 @@ async def publish_now(post_id: int, request: Request,
         raise HTTPException(400, "Пост сейчас публикуется")
     if not _can_publish(post, role):
         raise HTTPException(403, "Пост ждёт согласования — публикация после одобрения администратором")
+    if not post.targets:
+        raise HTTPException(400, "Нет ни одной страницы публикации — выберите проект или группы/каналы")
     post.status = "publishing"
     await publish_service.publish_post_now(s, post)
     await s.commit()

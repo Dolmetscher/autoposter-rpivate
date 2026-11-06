@@ -207,8 +207,10 @@ export default function PostEditor({ sources, accounts }: Props) {
       setError('Добавьте текст или вложения')
       return
     }
-    if (pageIds.length === 0) {
-      setError('Выберите хотя бы одну группу/канал')
+    // Черновик можно сохранить вообще без целей. Для публикации достаточно
+    // проекта — его страницы добавятся на бэкенде при сохранении/публикации
+    if (!asDraft && pageIds.length === 0 && !projectId) {
+      setError('Выберите хотя бы одну группу/канал или проект')
       return
     }
     if (whenType === 2 && !date) {

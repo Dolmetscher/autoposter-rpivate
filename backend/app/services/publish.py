@@ -27,6 +27,39 @@ def add_log(s: AsyncSession, user_id: int, message: str, level: str = "info",
                          source_id=source_id, level=level, message=message[:2000]))
 
 
+async def expand_project_page_ids(
+        s: AsyncSession, user: User, project_id: int | None,
+        page_ids: list[int] | None) -> list[int]:
+    """Единая логика целей: страницы проекта (аккаунтов проекта и привязанных
+    к нему напрямую) плюс явно выбранные страницы.
+
+    Используется и при создании, и при редактировании поста — иначе проект
+    разворачивался бы только при создании, а при правке неотмеченные цели
+    молча удалялись бы."""
+    page_ids = list(page_ids or [])
+    if project_id is None:
+        return page_ids
+    # Жадная загрузка: обращение к lazy-relationship в async-сессии
+    # вне flush роняет запрос с MissingGreenlet.
+    project = (await s.execute(
+        select(Project)
+        .options(selectinload(Project.accounts).selectinload(SocialAccount.pages),
+                 selectinload(Project.pages))
+        .where(Project.id == project_id, Project.user_id == user.id)
+    )).scalar_one_or_none()
+    if project is None:
+        raise ValueError(f"Project with id {project_id} not found")
+    # Страницы аккаунтов проекта + прямые страницы проекта
+    # (только те, куда можно публиковать)
+    project_page_ids = {
+        page.id
+        for account in project.accounts
+        for page in account.pages
+        if page.can_post
+    } | {page.id for page in project.pages if page.can_post}
+    return list({*page_ids, *project_page_ids})
+
+
 async def create_post(
     s: AsyncSession, user: User, *,
     texts: list[dict], media_ids: list[str] | None = None,
@@ -45,27 +78,7 @@ async def create_post(
 
     # Пост с project_id публикуется и на страницы аккаунтов проекта, и на
     # страницы, привязанные к проекту напрямую (project_pages).
-    # Жадная загрузка: обращение к lazy-relationship в async-сессии
-    # вне flush роняет запрос с MissingGreenlet.
-    if project_id is not None:
-        project = (await s.execute(
-            select(Project)
-            .options(selectinload(Project.accounts).selectinload(SocialAccount.pages),
-                     selectinload(Project.pages))
-            .where(Project.id == project_id, Project.user_id == user.id)
-        )).scalar_one_or_none()
-        if project is None:
-            raise ValueError(f"Project with id {project_id} not found")
-        # Страницы аккаунтов проекта + прямые страницы проекта
-        # (только те, куда можно публиковать)
-        project_page_ids = {
-            page.id
-            for account in project.accounts
-            for page in account.pages
-            if page.can_post
-        } | {page.id for page in project.pages if page.can_post}
-        # Объединяем с явно выбранными страницами
-        page_ids = list({*page_ids, *project_page_ids})
+    page_ids = await expand_project_page_ids(s, user, project_id, page_ids)
 
     # Расписание тоже проверяем: с включёнными внешними ключами несуществующий
     # schedule_id дал бы ошибку целостности (500) вместо понятного 400
@@ -108,6 +121,11 @@ async def create_post(
             found = {p.id for p in pages}
             missing = [pid for pid in page_ids if pid not in found]
             raise ValueError(f"Страницы не найдены: {missing}")
+
+    # Публиковать нечего: ни страниц, ни проекта — для черновика это нормально,
+    # а запланированный/мгновенный пост без целей просто «завис» бы в очереди
+    if post.status != "draft" and not pages:
+        raise ValueError("Не выбрана ни одна группа/канал и не указан проект")
 
     # вложения
     att_ids = list(media_ids) + list(document_ids)
