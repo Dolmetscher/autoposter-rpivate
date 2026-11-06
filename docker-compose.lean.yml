@@ -11,6 +11,9 @@ services:
       SCHEDULER_MODE: inline
       PORT: 8000            # внутренний порт; наружу торчит только nginx
       SECRET_KEY: ${SECRET_KEY:?задайте SECRET_KEY в .env}
+      # Мастер-ключ шифрования токенов: задайте один раз (можно = SECRET_KEY),
+      # тогда смены SECRET_KEY не ломают сохранённые токены аккаунтов
+      CREDENTIALS_SECRET: ${CREDENTIALS_SECRET:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
       # предохранители слабого сервера (см. DEPLOY.md, раздел «Слабый сервер»)
       MAX_MEDIA_SIZE_MB: ${MAX_MEDIA_SIZE_MB:-20}

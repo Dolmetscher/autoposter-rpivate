@@ -9,6 +9,10 @@ services:
       SCHEDULER_MODE: inline
       PORT: 8000            # внутренний порт; наружу торчит только nginx
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      # Мастер-ключ шифрования токенов соцсетей и LLM-ключей. Если задать его
+      # один раз, то смены SECRET_KEY (сессии, JWT) больше не ломают токены
+      # аккаунтов: секреты шифруются этим ключом независимо от SECRET_KEY.
+      CREDENTIALS_SECRET: ${CREDENTIALS_SECRET:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
       # Настройки прокси для обхода блокировок Meta и Twitter:
       HTTP_PROXY: "http://dmyD5d:R6Xu5s@168.81.66.247:8000"

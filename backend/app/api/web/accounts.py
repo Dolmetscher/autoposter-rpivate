@@ -10,6 +10,7 @@ from ...integrations.base import AdapterError
 from ...models import SocialAccount, SocialPage, User
 from ...schemas import AccountOut, ConnectIn, PageOut, source_out
 from ...services import accounts as accounts_service
+from ...services import crypto
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -26,7 +27,9 @@ async def list_accounts(user: User = Depends(get_current_user),
         d = AccountOut.model_validate(a).model_dump()
         d["pages"] = [PageOut.model_validate(p).model_dump() for p in a.pages]
         out.append(d)
-    return {"list": out}
+    # true — во время этого запроса какие-то секреты не расшифровались
+    # (сменился SECRET_KEY/CREDENTIALS_SECRET): UI показывает предупреждение
+    return {"list": out, "secrets_broken": crypto.decrypt_failures() > 0}
 
 
 @router.post("/connect")

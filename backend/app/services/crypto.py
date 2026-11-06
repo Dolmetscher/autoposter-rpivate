@@ -1,5 +1,5 @@
 """Шифрование секретов в БД (Fernet). Токены соцсетей и LLM-ключи шифруются
-прозрачно через TypeDecorator EncryptedJSON: в колонке хранится {"enc": "<fernet>"}.
+прозрачно через TypeDecorator EncryptedJSON: в колонке хранится {"__enc": "<fernet>"}.
 Старые записи в открытом виде читаются как есть (обратная совместимость)."""
 from __future__ import annotations
 
@@ -14,6 +14,15 @@ from ..config import settings
 log = logging.getLogger("crypto")
 
 _fernet: Fernet | None = None
+
+# Сколько секретов не расшифровалось с момента последнего сохранения нового
+# секрета (или старта процесса). Флаг для UI: «токены не читаются — проверьте
+# SECRET_KEY/CREDENTIALS_SECRET или заново введите секреты».
+_decrypt_failures = 0
+
+
+def decrypt_failures() -> int:
+    return _decrypt_failures
 
 
 def _key() -> bytes:
@@ -32,6 +41,10 @@ def _f() -> Fernet:
 
 
 def encrypt_value(data: dict) -> dict:
+    global _decrypt_failures
+    # Сохранили новый секрет — считаем, что чинят: флаг нечитаемых секретов
+    # сбрасываем (следующие неудачи при чтении снова его поднимут).
+    _decrypt_failures = 0
     return {"__enc": _f().encrypt(json.dumps(data, ensure_ascii=False).encode()).decode()}
 
 
@@ -44,6 +57,8 @@ def decrypt_value(stored):
     try:
         return json.loads(_f().decrypt(raw.encode()).decode())
     except (InvalidToken, ValueError) as e:
+        global _decrypt_failures
+        _decrypt_failures += 1
         log.warning("не удалось расшифровать секреты (%s) — скорее всего сменился "
                     "SECRET_KEY/CREDENTIALS_SECRET, секреты придётся ввести заново", e)
         return {}

@@ -9,6 +9,7 @@ from ...models import ApiToken, User
 from ...schemas import ApiTokenIn, LlmConfigIn
 from ...security import generate_api_token, hash_api_token
 from ...services import notify as notify_service
+from ...services import crypto
 from ...util import utcnow
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -42,7 +43,10 @@ async def get_settings(user: User = Depends(get_current_user),
     if llm.get("api_key"):
         llm["api_key"] = "***"
     notify = _mask_notify(await notify_service.get_settings(s, user.id))
-    return {"timezone": user.timezone, "llm_config": llm, "notify": notify}
+    # true — какой-то из зашифрованных секретов (LLM-ключ, токены аккаунтов)
+    # не расшифровался — обычно сменился SECRET_KEY/CREDENTIALS_SECRET
+    return {"timezone": user.timezone, "llm_config": llm, "notify": notify,
+            "secrets_broken": crypto.decrypt_failures() > 0}
 
 
 @router.put("")

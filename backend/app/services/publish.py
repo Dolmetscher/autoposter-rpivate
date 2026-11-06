@@ -197,6 +197,23 @@ async def publish_target(s: AsyncSession, post: Post, target: PostTarget) -> Non
     # s.get берёт объект из identity map — ленивой загрузки нет
     page.account = await s.get(SocialAccount, page.account_id)
     adapter = get_adapter(target.source_id)
+    # Пустые секреты у реальной сети: либо аккаунт не настроен, либо (чаще)
+    # расшифровка упала после смены SECRET_KEY/CREDENTIALS_SECRET — тогда
+    # каждая сеть отвечала бы «аккаунт не настроен». Даём точный диагноз сразу.
+    # Исключения: песочница (99) и сети, доставляющие контент через RSS-фид
+    # проекта (Дзен) — им токен аккаунта не нужен.
+    if (not page.account.credentials and adapter.source_id != 99
+            and not getattr(adapter, "rss_out", False)):
+        target.status = "failed"
+        target.error = ("Секреты аккаунта недоступны: не удалось расшифровать сохранённые "
+                        "токены (обычно из-за смены SECRET_KEY/CREDENTIALS_SECRET) либо "
+                        "аккаунт не настроен. Проверьте SECRET_KEY в настройках стека или "
+                        "заново введите токен в разделе «Аккаунты»")
+        add_log(s, post.user_id,
+                f"Публикация в «{page.social_page_name}» не выполнена: {target.error}",
+                "error", post_id=post.id, target_id=target.id, source_id=target.source_id)
+        await s.flush()
+        return
     target.status = "publishing"
     target.attempts += 1
     await s.flush()

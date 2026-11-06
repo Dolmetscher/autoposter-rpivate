@@ -30,13 +30,19 @@ function Shell() {
   const token = getToken()
   const [sources, setSources] = useState<SourceInfo[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [secretsBroken, setSecretsBroken] = useState(false)
   const metaLoaded = useRef(false)
 
   const reloadMeta = () => {
     api.get<{ list: SourceInfo[] }>('/api/web/sources')
       .then((d) => setSources(d.list)).catch(() => {})
-    api.get<{ list: Account[] }>('/api/web/accounts')
-      .then((d) => setAccounts(d.list)).catch(() => {})
+    // secrets_broken: какие-то сохранённые секреты не расшифровались
+    // (сменился SECRET_KEY/CREDENTIALS_SECRET) — Layout покажет предупреждение
+    api.get<{ list: Account[]; secrets_broken?: boolean }>('/api/web/accounts')
+      .then((d) => {
+        setAccounts(d.list)
+        setSecretsBroken(!!d.secrets_broken)
+      }).catch(() => {})
   }
 
   useEffect(() => {
@@ -48,6 +54,7 @@ function Shell() {
       metaLoaded.current = false
       setSources([])
       setAccounts([])
+      setSecretsBroken(false)
     }
   }, [token, location.pathname])
 
@@ -63,7 +70,7 @@ function Shell() {
   return (
     <Routes>
       <Route path="/login" element={<Navigate to="/" replace />} />
-      <Route element={<Layout />}>
+      <Route element={<Layout secretsBroken={secretsBroken} />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/posts" element={<Posts sources={sources} />} />
         <Route path="/posts/new" element={<PostEditor sources={sources} accounts={accounts} />} />

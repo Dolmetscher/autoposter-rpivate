@@ -1,5 +1,5 @@
 import React from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { getToken, setToken } from '../lib/api'
 
 const links: { to: string; label: string; icon: string }[] = [
@@ -15,7 +15,7 @@ const links: { to: string; label: string; icon: string }[] = [
   { to: '/settings', label: 'Настройки', icon: '⚙️' },
 ]
 
-export default function Layout() {
+export default function Layout({ secretsBroken }: { secretsBroken?: boolean }) {
   const nav = useNavigate()
   const logout = () => {
     setToken(null)
@@ -39,6 +39,17 @@ export default function Layout() {
         )}
       </aside>
       <main className="main">
+        {secretsBroken && (
+          <div className="card" style={{ margin: '0 0 16px', border: '1px solid #e5a50a', background: '#fff8e6' }}>
+            <b>⚠️ Сохранённые ключи не расшифровались.</b> Обычно это значит, что при
+            обновлении стека сменился SECRET_KEY (или CREDENTIALS_SECRET) — приложение
+            больше не видит токены аккаунтов и LLM-ключ, и публикации падают. Верните
+            прежнее значение SECRET_KEY в переменных стека Portainer (или заново введите
+            токены в разделе <Link to="/accounts">Аккаунты</Link> и ключ в{' '}
+            <Link to="/settings">Настройках</Link>) — после этого всё заработает без
+            переподключения.
+          </div>
+        )}
         <Outlet />
       </main>
     </div>
