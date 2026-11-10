@@ -109,3 +109,52 @@ async def test_upload_streams_via_tempfile(client, auth_headers):
     assert r.json()["size"] == len(payload)
     from app.services.storage import local_full
     assert local_full(r.json()["file_path"]).exists()
+
+
+async def test_upload_limit_zero_disables_check(client, auth_headers, monkeypatch):
+    """max_media_size_mb = 0 — лимит снят (место на диске возвращает автоочистка);
+    ненулевой лимит по-прежнему режет файл с понятной ошибкой 413."""
+    from app.config import settings
+
+    payload = b"\x89PNG" + b"x" * (2 * 1024 * 1024)  # 2 МБ
+    monkeypatch.setattr(settings, "max_media_size_mb", 0)
+    r = await client.post("/api/web/files/media/upload", headers=auth_headers,
+                          files={"file": ("big.png", io.BytesIO(payload), "image/png")})
+    assert r.status_code == 200
+    assert r.json()["size"] == len(payload)
+
+    monkeypatch.setattr(settings, "max_media_size_mb", 1)
+    r = await client.post("/api/web/files/media/upload", headers=auth_headers,
+                          files={"file": ("big.png", io.BytesIO(payload), "image/png")})
+    assert r.status_code == 413
+    assert "Файл больше 1 МБ" in r.json()["detail"]
+
+
+async def test_transcode_size_guard(client, auth_headers, monkeypatch):
+    """Видео больше TRANSCODE_MAX_MB не транскодится: исходник читается в память
+    целиком, а после снятия лимита загрузки на сервер попадают большие видео."""
+    from app.config import settings
+    from app.db import SessionFactory
+    from app.models import MediaFile
+
+    r = await client.post("/api/web/files/media/upload", headers=auth_headers,
+                          files={"file": ("clip.mp4", io.BytesIO(b"\x00" * 64), "video/mp4")})
+    assert r.status_code == 200
+    vid = r.json()["id"]
+    async with SessionFactory() as s:
+        mf = await s.get(MediaFile, vid)
+        mf.size = 2 * 1024 * 1024  # притворимся, что файл на 2 МБ
+        await s.commit()
+
+    monkeypatch.setattr(settings, "transcode_max_mb", 1)
+    r = await client.post(f"/api/web/files/{vid}/transcode", headers=auth_headers,
+                          json={"mode": "vertical"})
+    assert r.status_code == 400
+    assert "TRANSCODE_MAX_MB" in r.json()["detail"]
+
+    # 0 отключает предохранитель — дальше обычная ошибка ffmpeg на битом файле
+    monkeypatch.setattr(settings, "transcode_max_mb", 0)
+    r = await client.post(f"/api/web/files/{vid}/transcode", headers=auth_headers,
+                          json={"mode": "vertical"})
+    assert r.status_code == 400
+    assert "TRANSCODE_MAX_MB" not in r.json()["detail"]

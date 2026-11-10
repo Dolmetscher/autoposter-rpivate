@@ -43,7 +43,8 @@ async def save_upload(user_id: int, file: UploadFile, s: AsyncSession,
     ext = Path(file.filename or "").suffix.lower() or mimetypes.guess_extension(file.content_type or "") or ".bin"
     rel_path = f"posts/{TYPE_DIRS[ftype]}/{folder}/{file_id}{ext}"
 
-    # пишем на диск потоком — файл не собирается целиком в RAM
+    # пишем на диск потоком — файл не собирается целиком в RAM;
+    # max_media_size_mb == 0 — лимит снят (место на диске возвращает автоочистка)
     max_bytes = settings.max_media_size_mb * 1024 * 1024
     size = 0
     fd, tmp = tempfile.mkstemp(prefix="ap_upload_")
@@ -52,7 +53,7 @@ async def save_upload(user_id: int, file: UploadFile, s: AsyncSession,
         with open(tmp, "wb") as out:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
-                if size > max_bytes:
+                if max_bytes and size > max_bytes:
                     raise HTTPException(413, f"Файл больше {settings.max_media_size_mb} МБ")
                 out.write(chunk)
         await storage.save_stream(rel_path, tmp)

@@ -62,7 +62,8 @@ class Settings(BaseSettings):
     billing_return_path: str = "/settings"  # куда вернуть пользователя после оплаты
 
     rows_limit: int = 20
-    max_media_size_mb: int = 100
+    # лимит загрузки медиа, МБ; 0 = без ограничения (место на диске возвращает автоочистка)
+    max_media_size_mb: int = 0
     crosspost_max_items_per_poll: int = 5
     crosspost_max_media_mb: int = 50
 
@@ -70,6 +71,9 @@ class Settings(BaseSettings):
     # ffmpeg-перекодирование видео тяжёлое для 1 vCPU — можно отключить;
     # автоудаление медиа, не привязанных к постам/шаблонам, старше N дней (0 = выкл.)
     transcode_enabled: bool = True
+    # видео больше этого (МБ) не транскодится: файл читается в память целиком,
+    # на слабом сервере гигабайты уронят контейнер; 0 = проверка отключена
+    transcode_max_mb: int = 500
     media_retention_days: int = 0
 
     # OAuth-приложения (если пусто — в UI остаётся только подключение по токену)

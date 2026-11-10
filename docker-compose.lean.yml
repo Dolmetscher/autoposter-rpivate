@@ -15,7 +15,8 @@ services:
       # тогда смены SECRET_KEY не ломают сохранённые токены аккаунтов
       CREDENTIALS_SECRET: ${CREDENTIALS_SECRET:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
-      # предохранители слабого сервера (см. DEPLOY.md, раздел «Слабый сервер»)
+      # предохранители слабого сервера (см. DEPLOY.md, раздел «Слабый сервер»);
+      # MAX_MEDIA_SIZE_MB: 0 = без ограничения (в lean-профиле диска мало — лимит оставлен)
       MAX_MEDIA_SIZE_MB: ${MAX_MEDIA_SIZE_MB:-20}
       CROSSPOST_MAX_MEDIA_MB: ${CROSSPOST_MAX_MEDIA_MB:-15}
       MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-7}

@@ -110,6 +110,11 @@ async def transcode_file(file_id: str, payload: TranscodeIn,
         raise HTTPException(404, "Файл не найден")
     if mf.type != "video":
         raise HTTPException(400, "Транскодинг доступен только для видео")
+    # предохранитель: исходник читается в память целиком, гигабайты уронят контейнер
+    if settings.transcode_max_mb and (mf.size or 0) > settings.transcode_max_mb * 1024 * 1024:
+        raise HTTPException(400, f"Видео больше {settings.transcode_max_mb} МБ не перекодируется "
+                                 "на этом сервере (файл грузится в память целиком) — "
+                                 "сожмите его заранее или задайте TRANSCODE_MAX_MB")
     from ...services import transcode as transcode_service
     from ...util import gen_file_id, today_folder
     try:
