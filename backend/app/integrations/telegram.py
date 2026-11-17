@@ -21,7 +21,7 @@ import httpx
 from ..config import settings
 from ._mdfmt import md_to_plain, md_to_telegram_html, md_to_telegram_markdownv2
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
-                   SourceItem, media_filename, read_media_bytes)
+                   SourceItem, is_gif_media, media_filename, read_media_bytes)
 
 # Режим разметки Bot API: html (по умолчанию — устойчив к ошибкам) или
 # MarkdownV2 (переменная окружения TELEGRAM_PARSE_MODE=MarkdownV2).
@@ -154,7 +154,8 @@ class TelegramAdapter(SocialAdapter):
         caption_rest = full_text[_CAP_LIMIT:]
         caption = _md_tg(caption_src)
 
-        gallery = [(_named(await read_media_bytes(m), media_filename(m, "media")), m.type)
+        gallery = [(_named(await read_media_bytes(m), media_filename(m, "media")), m.type,
+                    is_gif_media(m))
                    for m in content.media]
         docs = [(_named(await read_media_bytes(d), media_filename(d, "document")), "document")
                 for d in content.documents]
@@ -163,9 +164,13 @@ class TelegramAdapter(SocialAdapter):
             message_id = None
             if gallery:
                 if len(gallery) == 1:
-                    bio, mtype = gallery[0]
+                    bio, mtype, gif = gallery[0]
                     method = {"photo": "sendPhoto", "video": "sendVideo"}.get(mtype, "sendDocument")
                     field = {"photo": "photo", "video": "video"}.get(mtype, "document")
+                    if gif:
+                        # GIF: sendPhoto оставит только первый кадр —
+                        # sendAnimation сохраняет анимацию.
+                        method, field = "sendAnimation", "animation"
                     r = await client.post(f"{base}/{method}",
                                           data={"chat_id": chat, "caption": caption,
                                                 "parse_mode": _PARSE_MODE,
@@ -173,9 +178,11 @@ class TelegramAdapter(SocialAdapter):
                                           files={field: (bio.name, bio)})
                     message_id = self._tg_ok(method, r)["message_id"]
                 else:
-                    # Альбом Telegram поддерживает только фото и видео.
+                    # Альбом Telegram поддерживает только фото и видео
+                    # (анимации в media group не принимаются — GIF уходит
+                    # как обычное фото).
                     media_group = []
-                    for i, (bio, mtype) in enumerate(gallery):
+                    for i, (bio, mtype, _gif) in enumerate(gallery):
                         entry = {"type": mtype, "media": f"attach://file{i}"}
                         if i == 0 and caption:
                             entry["caption"] = caption
@@ -185,7 +192,7 @@ class TelegramAdapter(SocialAdapter):
                                           data={"chat_id": chat,
                                                 "media": _json.dumps(media_group, ensure_ascii=False)},
                                           files={f"file{i}": (bio.name, bio)
-                                                 for i, (bio, _) in enumerate(gallery)})
+                                                 for i, (bio, _m, _g) in enumerate(gallery)})
                     res = self._tg_ok("sendMediaGroup", r)
                     message_id = res[0]["message_id"]
                 # Документы в альбом Telegram не пускает — шлём их отдельными сообщениями.

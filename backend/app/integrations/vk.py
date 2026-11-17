@@ -20,7 +20,7 @@ import httpx
 
 from ._mdfmt import md_to_plain
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
-                   SourceItem, media_filename, read_media_bytes, upload_filename)
+                   SourceItem, is_gif_media, media_filename, read_media_bytes, upload_filename)
 
 API = "https://api.vk.com/method"
 V = "5.199"
@@ -522,8 +522,15 @@ class VKAdapter(SocialAdapter):
                                                   external_url=f"https://vk.com/clips{info}")
                         media_attachments.append(att)
                     elif media.type == "photo":
-                        media_attachments.append(
-                            await self._upload_photo(client, upload_token, group_id, media))
+                        if is_gif_media(media):
+                            # GIF-анимация: загрузка через photos.* превращает её
+                            # в статичный кадр, а документ с расширением .gif ВК
+                            # сам показывает на стене анимированным.
+                            media_attachments.append(
+                                await self._upload_doc(client, upload_token, group_id, media))
+                        else:
+                            media_attachments.append(
+                                await self._upload_photo(client, upload_token, group_id, media))
                     elif media.type == "video":
                         media_attachments.append(
                             await self._upload_video(client, upload_token, group_id, media))

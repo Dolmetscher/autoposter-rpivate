@@ -103,6 +103,19 @@ def upload_filename(media, default: str = "file") -> str:
     return f"{ascii_stem or 'file'}{suffix}"
 
 
+def is_gif_media(media) -> bool:  # noqa: ANN001
+    """GIF-анимация? Загрузчик помечает .gif как обычное «фото» (type="photo"),
+    из-за чего VK и Telegram превращают их в статичную картинку. Определяем
+    GIF по расширению .gif имени файла или пути в хранилище (mime-тип
+    у MediaFile не хранится; расширение в имени надёжно сохраняется при
+    загрузке и в base, и в S3)."""
+    for attr in ("name", "file_path"):
+        value = (getattr(media, attr, None) or "").strip().lower()
+        if value.endswith(".gif"):
+            return True
+    return False
+
+
 async def read_media_bytes_to_file(media, dst_path: str) -> int:  # noqa: ANN001
     """Записывает медиафайл из хранилища в dst_path потоком (не в RAM),
     возвращает размер в байтах. Для больших видео (YouTube/Rutube)."""
