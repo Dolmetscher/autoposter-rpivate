@@ -502,7 +502,7 @@ export default function PostEditor({ sources, accounts }: Props) {
             <div className="settings-checks">
               <label className="check"><input type="checkbox" checked={bool('pin_post')} onChange={(e) => set('pin_post', e.target.checked)} /> Закрепить пост</label>
               <label className="check"><input type="checkbox" checked={bool('disable_comments')} onChange={(e) => set('disable_comments', e.target.checked)} /> Отключить комментарии</label>
-              <label className="check"><input type="checkbox" checked={bool('publish_as_story')} onChange={(e) => set('publish_as_story', e.target.checked)} /> Публиковать как историю</label>
+              <label className="check" title="ВКонтакте, Instagram и Telegram-аккаунт публикуют историю; сети без историй получат обычный пост"><input type="checkbox" checked={bool('publish_as_story')} onChange={(e) => set('publish_as_story', e.target.checked)} /> Публиковать как историю</label>
               <label className="check"><input type="checkbox" checked={bool('publish_as_clips')} onChange={(e) => set('publish_as_clips', e.target.checked)} /> ВК: как клипы</label>
               <label className="check"><input type="checkbox" checked={bool('share_clips_to_feed')} onChange={(e) => set('share_clips_to_feed', e.target.checked)} /> ВК: дублировать клипы в ленту</label>
               <label className="check"><input type="checkbox" checked={bool('video_only')} onChange={(e) => set('video_only', e.target.checked)} /> ВК/ОК: только видео в видеозаписи (без поста)</label>

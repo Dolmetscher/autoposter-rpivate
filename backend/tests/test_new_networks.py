@@ -130,15 +130,17 @@ def test_threads_connect_fields():
     assert fields == {"access_token", "threads_user_id"}
 
 
-async def test_threads_rejects_empty_and_story():
+async def test_threads_rejects_empty_and_ignores_story():
     from app.integrations.threads import ThreadsAdapter
     ad = ThreadsAdapter()
     page = SimpleNamespace(account=_A({"access_token": "t", "threads_user_id": "u"}))
     with pytest.raises(AdapterError, match="пустой"):
         await ad.publish(page, SimpleNamespace(text="", media=[], documents=[],
                                                settings={}))
-    with pytest.raises(AdapterError, match="историй"):
-        await ad.publish(page, SimpleNamespace(text="x", media=[], documents=[],
+    # publish_as_story: у Threads историй нет — галочка игнорируется,
+    # пост идёт обычным в ленту (раньше сеть падала с ошибкой «историй»).
+    with pytest.raises(AdapterError, match="пустой"):
+        await ad.publish(page, SimpleNamespace(text="", media=[], documents=[],
                                                settings={"publish_as_story": True}))
 
 

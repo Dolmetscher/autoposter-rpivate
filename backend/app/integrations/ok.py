@@ -161,8 +161,8 @@ class OKAdapter(SocialAdapter):
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
         creds = page.account.credentials
         st = content.settings or {}
-        if st.get("publish_as_story"):
-            raise AdapterError("OK: истории через API не поддерживаются")
+        # publish_as_story: у ОК нет историй через API — настройка
+        # игнорируется, пост публикуется как обычный (см. 4.8 руководства).
         gid = None if getattr(page, "page_kind", "group") == "user" else page.social_page_id
 
         if st.get("video_only"):

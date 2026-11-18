@@ -70,9 +70,8 @@ class MaxAdapter(SocialAdapter):
 
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
         token = page.account.credentials.get("access_token")
-        st = content.settings or {}
-        if st.get("publish_as_story"):
-            raise AdapterError("Макс: истории не поддерживаются Bot API")
+        # publish_as_story: Bot API Макса историй не поддерживает — настройка
+        # игнорируется, пост идёт обычным сообщением (см. 4.8 руководства).
         attachments = []
         async with httpx.AsyncClient(timeout=300) as client:
             for m in content.media:

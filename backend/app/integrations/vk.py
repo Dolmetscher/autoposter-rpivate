@@ -421,7 +421,10 @@ class VKAdapter(SocialAdapter):
                           content: PublishContent) -> PublishOutcome:  # noqa: ANN001
         group_id = None if getattr(page, "page_kind", "group") == "user" \
             else int(re.sub(r"\D", "", str(page.social_page_id)))
-        params = {"access_token": token, "v": V, "add_news": 1}
+        # Параметр публикации в новости называется add_to_news (add_news VK
+        # молча игнорирует), а после загрузки историю публикует stories.save
+        # с upload_results — метода stories.post в API не существует.
+        params = {"access_token": token, "v": V, "add_to_news": 1}
         if group_id:
             params["group_id"] = abs(group_id)
         if not content.media:
@@ -433,7 +436,9 @@ class VKAdapter(SocialAdapter):
         upload_url = info.get("upload_url") if isinstance(info, dict) else info
         if not isinstance(upload_url, str) or not upload_url:
             raise AdapterError("VK: не вернулась ссылка на сервер загрузки истории")
-        field = "photo" if media.type == "photo" else "video_file"
+        # Сервер загрузки историй ждёт поле file (фото) / video_file,
+        # а не «photo», как при загрузке фото на стену.
+        field = "file" if media.type == "photo" else "video_file"
         try:
             up = await client.post(upload_url,
                                    files={field: (upload_filename(media, "media.jpg"),
@@ -449,16 +454,20 @@ class VKAdapter(SocialAdapter):
             err = data["error"]
             msg = err.get("error_msg", "ошибка") if isinstance(err, dict) else str(err)
             raise AdapterError(f"VK истории: загрузка не удалась — {msg}")
-        items = (data.get("response") or {}).get("items") or []
-        if not items:
+        # Ответ сервера загрузки историй: {"response": {"upload_result": "..."}}
+        # — никаких items (items появляются только у stories.save).
+        upload_result = ((data.get("response") or {}).get("upload_result", "")
+                         if isinstance(data, dict) else "")
+        if not upload_result:
             raise AdapterError(f"VK истории: загрузка не удалась: {data}")
-        res = await client.post(f"{API}/stories.post", data={
-            **params, "upload_results": items[0].get("upload_result", "")})
-        out = self._unwrap("stories.post", res)
-        story = (out.get("items") or [{}])[0]
+        res = await client.post(f"{API}/stories.save", data={
+            **params, "upload_results": upload_result})
+        out = self._unwrap("stories.save", res)
+        story = ((out.get("items") or [{}]) or [{}])[0]
         sid = story.get("id", "")
+        owner = story.get("owner_id") or group_id or ""
         return PublishOutcome(True, external_id=f"story{sid}",
-                              external_url=f"https://vk.com/story{group_id or ''}_{sid}")
+                              external_url=f"https://vk.com/story{owner}_{sid}")
 
     @staticmethod
     def _unwrap(method: str, r: httpx.Response):

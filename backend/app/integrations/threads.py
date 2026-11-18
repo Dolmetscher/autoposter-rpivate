@@ -128,9 +128,8 @@ class ThreadsAdapter(SocialAdapter):
         token, uid = creds.get("access_token"), creds.get("threads_user_id")
         if not (token and uid):
             raise AdapterError("Threads: аккаунт не настроен")
-        st = content.settings or {}
-        if st.get("publish_as_story"):
-            raise AdapterError("Threads: историй нет — это пост в ленту")
+        # publish_as_story: у Threads историй нет — настройка игнорируется,
+        # пост идёт в ленту (см. 4.8 руководства).
 
         photos = [m for m in content.media if m.type == "photo"]
         videos = [m for m in content.media if m.type == "video"]

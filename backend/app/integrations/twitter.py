@@ -117,9 +117,8 @@ class TwitterAdapter(SocialAdapter):
 
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
         creds = self._creds(page.account)
-        st = content.settings or {}
-        if st.get("publish_as_story"):
-            raise AdapterError("Twitter: историй (stories) нет — это пост в ленту")
+        # publish_as_story: у X нет историй — настройка игнорируется,
+        # пост идёт в ленту (см. 4.8 руководства).
         if not content.text and not content.media:
             raise AdapterError("Twitter: пустой пост")
         # Проверяем до загрузки файлов: X принимает до 4 фото либо 1 видео.

@@ -51,9 +51,8 @@ class TumblrAdapter(SocialAdapter):
 
     async def publish(self, page, content: PublishContent) -> PublishOutcome:  # noqa: ANN001
         creds = self._creds(page.account)
-        st = content.settings or {}
-        if st.get("publish_as_story"):
-            raise AdapterError("Tumblr: историй нет — это пост в блог")
+        # publish_as_story: у Tumblr историй нет — настройка игнорируется,
+        # пост идёт в блог (см. 4.8 руководства).
         text = (content.text or "").strip()
         photos = [m for m in content.media if m.type == "photo"]
         if videos := [m for m in content.media if m.type == "video"]:

@@ -107,10 +107,8 @@ class FacebookAdapter(SocialAdapter):
         if not token or token == user_token:
             token = await self._resolve_page_token(pid, user_token)
 
-        st = content.settings or {}
-        if st.get("publish_as_story"):
-            raise AdapterError("FB: истории через API не поддерживаются в этой версии")
-            
+        # publish_as_story: истории через FB API недоступны — настройка
+        # игнорируется, пост публикуется как обычный (см. 4.8 руководства).
         photos = [m for m in content.media if m.type == "photo"]
         videos = [m for m in content.media if m.type == "video"]
 

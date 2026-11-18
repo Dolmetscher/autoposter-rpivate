@@ -133,8 +133,9 @@ class TelegramAdapter(SocialAdapter):
         if not token:
             raise AdapterError("Telegram: не указан bot_token")
         st = content.settings or {}
-        if st.get("publish_as_story"):
-            raise AdapterError("Telegram: истории доступны только для аккаунтов (подключите через Telethon)")
+        # publish_as_story: истории в Telegram работают только в режиме
+        # аккаунта; бот-режим настройку игнорирует и шлёт обычное сообщение
+        # (см. 4.8 руководства).
         chat = page.social_page_id
         base = f"https://api.telegram.org/bot{token}"
         link = (st.get('link') or '').strip()
