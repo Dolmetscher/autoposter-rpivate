@@ -7,6 +7,9 @@
   ошибка вместо невнятного ответа Graph.
 - FB-источник кросспостинга: лента своей страницы (/{page-id}/posts),
   чужие паблики — закрытая фича Page Public Content Access.
+- OK-источник: лента своего паблика — group.getStatTopics (ID и время
+  топиков, доступно владельцу/администратору) + mediatopic.getByIds
+  (содержимое); чужие группы ОК не отдаёт.
 - Отложенный репост: источник с delay_minutes создаёт пост «scheduled»
   со сроком «сейчас + N минут», планировщик публикует его в срок.
 """
@@ -316,3 +319,145 @@ async def test_zero_delay_still_publishes_immediately(client, auth_headers,
     r = await client.get("/api/web/posts", headers=auth_headers)
     posts = r.json()["list"]
     assert posts[0]["status"] == "published"
+
+
+# ---------- OK: источник — свой паблик ----------
+
+def test_ok_parse_group_ref():
+    parse = OKAdapter._parse_group_ref
+    assert parse("https://ok.ru/group/123456789") == "123456789"
+    assert parse("https://ok.ru/group/123456789/") == "123456789"
+    assert parse("https://odnoklassniki.ru/group/987654321") == "987654321"
+    assert parse("123456789") == "123456789"
+    # короткий адрес без числового ID не принимается
+    with pytest.raises(AdapterError) as ei:
+        parse("https://ok.ru/mypublik")
+    assert "числовую ссылку" in str(ei.value)
+    with pytest.raises(AdapterError):
+        parse("")
+
+
+async def test_ok_fetch_source_items_own_public(monkeypatch):
+    """Лента своего паблика: ID топиков из статистики (свежие — первыми),
+    содержимое из mediatopic.getByIds; текст склеивается, фото — по
+    самой крупной pic_-ссылке, топики без контента пропускаются."""
+    calls = []
+
+    async def fake_call(self, method, creds, extra_params=None):
+        calls.append((method, extra_params or {}))
+        if method == "group.getStatTopics":
+            # специально вразнобой — сортировка по created_ms обязательна
+            return {"topics": [
+                {"id": "t_old", "created_ms": 1000, "views": 5},
+                {"id": "t_new", "created_ms": 3000, "views": 9},
+                {"id": "t_mid", "created_ms": 2000, "views": 7},
+            ], "has_more": False}
+        if method == "mediatopic.getByIds":
+            return [
+                {"id": "t_new", "media": [
+                    {"type": "text", "text": "Свежий пост"},
+                    {"type": "photo", "list": [
+                        {"id": "p1", "pic_max": "https://i.mycdn.me/p1.jpg"},
+                        # без pic_max — берём самое крупное из доступных
+                        {"id": "p2", "pic640x480": "https://i.mycdn.me/p2.jpg"},
+                    ]},
+                ]},
+                {"id": "t_mid", "media": [
+                    {"type": "text", "text": "Средний пост"},
+                    {"type": "movie", "list": [{"id": "v1"}]},  # видео пропускается
+                ]},
+                {"id": "t_old", "media": [
+                    {"type": "text", "text": "Старый пост"},
+                ]},
+            ]
+        raise AssertionError(f"unexpected method {method}")
+
+    monkeypatch.setattr(OKAdapter, "call", fake_call)
+
+    class Acc:
+        credentials = {"access_token": "t", "application_key": "k",
+                       "session_secret_key": "s"}
+
+    items = await OKAdapter().fetch_source_items(
+        "https://ok.ru/group/555777", limit=2, account=Acc())
+
+    # свежие первыми, лимит соблюдён
+    assert [i.external_id for i in items] == ["t_new", "t_mid"]
+    # запрос статистики: своя группа, счётчик топиков
+    stat_call = next((p for m, p in calls if m == "group.getStatTopics"))
+    assert stat_call["gid"] == "555777"
+    assert stat_call["count"] == 2
+    # содержимое: ID через запятую, свежие первыми
+    topics_call = next((p for m, p in calls if m == "mediatopic.getByIds"))
+    assert topics_call["topic_ids"] == "t_new,t_mid"
+
+    by_id = {i.external_id: i for i in items}
+    assert by_id["t_new"].text == "Свежий пост"
+    assert by_id["t_new"].media == [
+        {"url": "https://i.mycdn.me/p1.jpg", "kind": "photo"},
+        {"url": "https://i.mycdn.me/p2.jpg", "kind": "photo"}]
+    # видео в топике не репостится — только текст
+    assert by_id["t_mid"].media == []
+    assert by_id["t_mid"].text == "Средний пост"
+    assert all(i.url == f"https://ok.ru/group/555777/topic/{i.external_id}"
+               for i in items)
+
+
+async def test_ok_fetch_source_items_skips_empty_topics(monkeypatch):
+    """Топик без текста и фото в выдачу не попадает; пустая статистика —
+    второй запрос не делается вовсе."""
+    calls = []
+
+    async def fake_call(self, method, creds, extra_params=None):
+        calls.append(method)
+        if method == "group.getStatTopics":
+            return {"topics": [{"id": "t_empty", "created_ms": 100}]}
+        if method == "mediatopic.getByIds":
+            return [{"id": "t_empty", "media": []}]
+        raise AssertionError(method)
+
+    monkeypatch.setattr(OKAdapter, "call", fake_call)
+
+    class Acc:
+        credentials = {"access_token": "t"}
+
+    items = await OKAdapter().fetch_source_items("555777", account=Acc())
+    assert items == []
+    assert "mediatopic.getByIds" in calls  # содержимое спросили
+
+    # и вариант «топиков нет вообще» — без второго запроса
+    calls.clear()
+
+    async def fake_call_empty(self, method, creds, extra_params=None):
+        calls.append(method)
+        return {"topics": []}
+
+    monkeypatch.setattr(OKAdapter, "call", fake_call_empty)
+    items = await OKAdapter().fetch_source_items("555777", account=Acc())
+    assert items == []
+    assert calls == ["group.getStatTopics"]
+
+
+async def test_ok_fetch_source_items_foreign_group_hint(monkeypatch):
+    """Чужая группа: статистика не отдаётся — ошибка объясняет, что
+    репост работает только со своих пабликов."""
+
+    async def fake_call(self, method, creds, extra_params=None):
+        raise AdapterError("OK group.getStatTopics: Permission denied")
+
+    monkeypatch.setattr(OKAdapter, "call", fake_call)
+
+    class Acc:
+        credentials = {"access_token": "t"}
+
+    with pytest.raises(AdapterError) as ei:
+        await OKAdapter().fetch_source_items("https://ok.ru/group/111222",
+                                             account=Acc())
+    msg = str(ei.value)
+    assert "владельцу/администратору" in msg
+    assert "свой паблик" in msg
+
+
+async def test_ok_fetch_source_requires_account():
+    with pytest.raises(AdapterError):
+        await OKAdapter().fetch_source_items("12345", account=None)

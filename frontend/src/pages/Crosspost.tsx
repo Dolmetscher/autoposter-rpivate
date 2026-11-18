@@ -21,9 +21,10 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
     id: 30, slug: 'rss', name: 'RSS-лента', implemented: true, experimental: false,
     oauth: false, capabilities: [], color: '#f26522',
   }
-  const crosspostable = [...sources.filter((s) => [1, 3, 9, 17].includes(s.id)), rssSource]
+  const crosspostable = [...sources.filter((s) => [1, 2, 3, 9, 17].includes(s.id)), rssSource]
   const refHint = (sid: number) =>
     sid === 1 ? 'id группы ВК, напр. -12345' :
+    sid === 2 ? 'ссылка на свой паблик ОК: ok.ru/group/12345' :
     sid === 3 ? 'ссылка на свою страницу FB или её ID' :
     sid === 9 ? '@канал или t.me/канал' :
     sid === 17 ? 'channel_id YouTube (UC…)' :
@@ -70,7 +71,7 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
       <div className="between">
         <div>
           <h1>Кросспостинг</h1>
-          <p className="subtitle">Автоматическое копирование постов из чужих каналов к себе</p>
+          <p className="subtitle">Автоматическое копирование постов из каналов и пабликов к себе</p>
         </div>
         <button onClick={() => setCreating(!creating)}>＋ Добавить источник</button>
       </div>

@@ -2,21 +2,26 @@
 официальный REST API с подписью запросов (md5).
 
 Личные страницы: публикация в ленту профиля (mediatopic.post type=USER).
-Кросспостинг из чужих групп ОК невозможен: публичный API не отдаёт ленту
-группы (mediatopic.getByIds требует известные ID, статистические методы
-group.getStat* — только владельцу группы и не про все топики)."""
+
+Репост из своих пабликов: публичный API ОК не отдаёт ленту группы напрямую,
+но владельцу/администратору доступна статистика топиков (group.getStatTopics
+возвращает ID и время создания топиков), а содержимое дотягивается
+mediatopic.getByIds. На этом построен fetch_source_items — репост работает
+только со своих пабликов, чужие группы ОК не читает.
+"""
 from __future__ import annotations
 
 import hashlib
 import io
 import json
+import re
 
 import httpx
 
 from ..config import settings
 from ._mdfmt import md_to_plain
 from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
-                   media_filename, read_media_bytes)
+                   SourceItem, media_filename, read_media_bytes)
 
 
 class OKAdapter(SocialAdapter):
@@ -24,10 +29,11 @@ class OKAdapter(SocialAdapter):
     name = "Одноклассники"
     capabilities = ("post", "photo", "video")
     note = ("публикация — в группы и на личную страницу (ленту профиля); "
-            "репост из чужих групп ОК недоступен — API не отдаёт ленту группы. "
-            "Форматирование текста API ОК не поддерживает: разметка Markdown "
-            "(жирный/курсив/ссылки) аккуратно снимается, остаются чистый текст "
-            "и ссылки")
+            "репост — из своих пабликов: лента группы доступна только "
+            "владельцу/администратору (через статистику топиков), чужие группы "
+            "ОК не отдаёт. Форматирование текста API ОК не поддерживает: "
+            "разметка Markdown (жирный/курсив/ссылки) аккуратно снимается, "
+            "остаются чистый текст и ссылки")
 
     # ---------- служебные ----------
     async def call(self, method: str, creds: dict, extra_params: dict | None = None) -> dict:
@@ -222,6 +228,113 @@ class OKAdapter(SocialAdapter):
         topic_id = str(topic)
         url = f"https://ok.ru/{('group/' + gid) if gid else 'profile/' + str(page.social_page_id)}/{topic_id}"
         return PublishOutcome(True, external_id=topic_id, external_url=url)
+
+    # ---------- кросспостинг ----------
+    @staticmethod
+    def _parse_group_ref(ref: str) -> str:
+        """Ссылка на паблик или голый ID → числовой ID группы.
+
+        Короткие адреса вида ok.ru/имя не принимаются: group.getStatTopics
+        работает с числовым gid, поэтому просим числовую ссылку (ok.ru/group/…).
+        """
+        ref = (ref or "").strip()
+        if not ref:
+            raise AdapterError("OK: укажите ссылку на свой паблик или его ID "
+                               "(напр. https://ok.ru/group/123456789)")
+        m = re.search(r"(?:ok\.ru|odnoklassniki\.ru)/group/(\d+)", ref)
+        if m:
+            return m.group(1)
+        if ref.isdigit():
+            return ref
+        raise AdapterError(
+            "OK: не удалось определить ID паблика. Укажите числовую ссылку "
+            "(https://ok.ru/group/123456789) или числовой ID — короткие адреса "
+            "вида ok.ru/имя API ОК не принимает")
+
+    @staticmethod
+    def _photo_url(photo) -> str:  # noqa: ANN001
+        """Ссылка на изображение из фото-блока топика: ОК отдаёт набор
+        pic_-превью разного размера — берём самое крупное из доступных."""
+        if not isinstance(photo, dict):
+            return ""
+        for key in ("pic_max", "pic1024x768", "pic640x480", "pic320x240",
+                    "pic190x190"):
+            url = photo.get(key)
+            if isinstance(url, str) and url.startswith("http"):
+                return url
+        for key, url in sorted(photo.items()):
+            if key.startswith("pic") and isinstance(url, str) and url.startswith("http"):
+                return url
+        return ""
+
+    async def fetch_source_items(self, source_ref: str, limit: int = 10,
+                                 account=None) -> list[SourceItem]:  # noqa: ANN001
+        """Лента своего паблика ОК: свежие топики для репоста.
+
+        Лента группы читается в два шага: group.getStatTopics отдаёт ID и
+        время создания топиков (метод статистики — доступен только
+        владельцу/администратору группы, права GROUP_CONTENT + VALUABLE_ACCESS),
+        затем mediatopic.getByIds возвращает содержимое. Поэтому репост
+        возможен только со своих пабликов — чужие группы ОК не отдаёт.
+
+        Топики без статистики в выдачу не попадают (ограничение OK): пост,
+        который кроме автора никто не видел, репостнуться не сможет.
+        """
+        creds = (account.credentials if account is not None else None) or {}
+        if not creds.get("access_token"):
+            raise AdapterError("ОК-кросспостинг: подключите аккаунт "
+                               "Одноклассники (нужен токен)")
+        gid = self._parse_group_ref(source_ref)
+        try:
+            stats = await self.call("group.getStatTopics", creds,
+                                    {"gid": gid, "count": limit,
+                                     "fields": "topic.*"})
+        except AdapterError as e:
+            raise AdapterError(
+                f"ОК-репост группы {gid}: {e} — лента группы доступна только "
+                "владельцу/администратору. Укажите свой паблик: репост из "
+                "чужих групп Одноклассники не поддерживает") from e
+        rows = ([t for t in (stats.get("topics") or [])
+                 if isinstance(t, dict) and t.get("id")]
+                if isinstance(stats, dict) else [])
+        rows.sort(key=lambda t: int(t.get("created_ms") or 0), reverse=True)
+        ids = [str(t["id"]) for t in rows[:limit]]
+        if not ids:
+            return []
+
+        full = await self.call("mediatopic.getByIds", creds,
+                               {"topic_ids": ",".join(ids),
+                                "fields": "media_topic.*"})
+        full_list = full if isinstance(full, list) else (
+            (full.get("topics") if isinstance(full, dict) else None) or [])
+        by_id = {str(t.get("id")): t for t in full_list
+                 if isinstance(t, dict) and t.get("id") is not None}
+
+        items: list[SourceItem] = []
+        for tid in ids:
+            topic = by_id.get(tid)
+            if not topic:
+                continue
+            text_parts: list[str] = []
+            media: list[dict] = []
+            for block in topic.get("media") or []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text" and block.get("text"):
+                    text_parts.append(str(block["text"]))
+                elif block.get("type") == "photo":
+                    for ph in block.get("list") or []:
+                        url = self._photo_url(ph)
+                        if url:
+                            media.append({"url": url, "kind": "photo"})
+                # видео (movie) и прочие блоки пропускаем: прямой ссылки для
+                # загрузки нет — как и в источнике ВК, репостятся текст и фото
+            text = "\n".join(text_parts).strip()
+            if text or media:
+                items.append(SourceItem(
+                    external_id=tid, text=text, media=media,
+                    url=f"https://ok.ru/group/{gid}/topic/{tid}"))
+        return items
 
     async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
         if external_id.startswith("video"):
