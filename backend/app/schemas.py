@@ -191,6 +191,7 @@ class CrosspostSourceIn(BaseModel):
     only_with_media: bool = False
     keyword_filter: str = ""
     poll_interval_min: int = 15
+    delay_minutes: int = 0
     active: bool = True
 
 

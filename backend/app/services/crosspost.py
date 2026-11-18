@@ -140,6 +140,24 @@ async def _copy_item(session: AsyncSession, user: User, src: CrosspostSource,
         return 0
 
     if src.target_page_ids:
+        delay = int(src.delay_minutes or 0)
+        if delay > 0:
+            # Отложенный репост: пост создаётся со сроком «сейчас + N минут» и
+            # публикуется планировщиком в срок (как обычный отложенный пост).
+            when = utcnow() + timedelta(minutes=delay)
+            post = await publish_service.create_post(
+                session, user,
+                texts=[{"text": text, "source_id": 0}],
+                media_ids=media_ids, settings={"crosspost_source_id": src.id},
+                page_ids=src.target_page_ids, when_type=2,
+                publication_date=when,
+            )
+            publish_service.add_log(session, user.id,
+                                    f"Кросспостинг: пост {item.external_id} из «{src.name or src.source_ref}» "
+                                    f"добавлен в отложенные ({delay} мин)",
+                                    "info", post_id=post.id, source_id=src.source_id)
+            await session.flush()
+            return 1
         post = await publish_service.create_post(
             session, user,
             texts=[{"text": text, "source_id": 0}],

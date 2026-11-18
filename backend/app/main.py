@@ -55,6 +55,7 @@ async def _migrate_columns(conn) -> None:
         ("users", "plan", "VARCHAR(32) DEFAULT 'free' NOT NULL"),
         ("social_accounts", "extra", "JSON"),
         ("crosspost_sources", "active", "BOOLEAN DEFAULT 1 NOT NULL"),
+        ("crosspost_sources", "delay_minutes", "INTEGER DEFAULT 0 NOT NULL"),
         ("projects", "rss_token", "VARCHAR(64) DEFAULT '' NOT NULL"),
     ]
     for table, column, ddl in migrations:

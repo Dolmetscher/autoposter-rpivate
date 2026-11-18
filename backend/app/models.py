@@ -268,6 +268,7 @@ class CrosspostSource(Base):
     only_with_media: Mapped[bool] = mapped_column(Boolean, default=False)
     keyword_filter: Mapped[str] = mapped_column(String(512), default="")
     poll_interval_min: Mapped[int] = mapped_column(Integer, default=15)
+    delay_minutes: Mapped[int] = mapped_column(Integer, default=0)  # 0 = сразу; N = отложенно через N мин
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

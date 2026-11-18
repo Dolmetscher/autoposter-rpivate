@@ -1,13 +1,21 @@
 """Facebook: посты на страницы через Graph API (Page access token).
-Фото/видео загружаются напрямую байтами (multipart), не требуя публичных ссылок."""
+Фото/видео загружаются напрямую байтами (multipart), не требуя публичных ссылок.
+
+Личные профили: публикация в них запрещена Meta (право publish_actions
+удалено в 2018) — доступна только ошибка с понятным объяснением.
+Кросспостинг-источник: лента своей страницы (/{page-id}/posts). Чужие
+публичные страницы читаются только с закрытой фичей Page Public Content
+Access, обычным приложениям недоступной."""
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 
 from ._mdfmt import md_to_plain
-from .base import AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter, read_media_bytes
+from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, SocialAdapter,
+                   SourceItem, read_media_bytes)
 
 logger = logging.getLogger(__name__)
 GRAPH = "https://graph.facebook.com/v21.0"
@@ -17,9 +25,11 @@ class FacebookAdapter(SocialAdapter):
     source_id = 3
     name = "Facebook"
     capabilities = ("post", "photo", "video")
-    note = ("форматирование текста API Facebook не поддерживает — "
-            "разметка Markdown аккуратно снимается, остаются чистый текст "
-            "и ссылки")
+    note = ("публикация — на страницы (Pages); личные профили API Facebook не "
+            "позволяет (Meta закрыла это в 2018). Источник кросспостинга — "
+            "лента своей страницы; чужие паблики доступны только приложениям с "
+            "закрытой фичей Page Public Content Access. Форматирование текста "
+            "API не поддерживает — разметка Markdown аккуратно снимается")
 
     def connect_requires(self) -> list[dict]:
         return [{"name": "access_token",
@@ -56,7 +66,7 @@ class FacebookAdapter(SocialAdapter):
                     raise AdapterError(f"FB: {me_data['error'].get('message')}")
                 return [PageInfo(me_data["id"], me_data.get("name", ""),
                                  (me_data.get("picture", {}).get("data") or {}).get("url", ""),
-                                 kind="page")]
+                                 kind="user", can_post=False)]
 
         if "error" in data:
             raise AdapterError(f"FB: {data['error'].get('message')}")
@@ -83,6 +93,15 @@ class FacebookAdapter(SocialAdapter):
         user_token = page.account.credentials.get("access_token")
         if not user_token:
             raise AdapterError("FB: у аккаунта нет access_token")
+
+        if getattr(page, "page_kind", "page") == "user":
+            # Личная страница (профиль): Graph API запрещает публикацию в профили —
+            # право publish_actions удалено Meta в 2018. Публикуйте на страницу (Page).
+            raise AdapterError(
+                "FB: публикация на личную страницу (профиль) запрещена API Facebook — "
+                "Meta закрыла её в 2018. Доступны только страницы: подключите токен "
+                "страницы или user-токен с правом manage_pages (кнопка «Обновить страницы» "
+                "в настройках аккаунта)")
 
         token = page.account.credentials.get(f"token_{pid}")
         if not token or token == user_token:
@@ -143,6 +162,73 @@ class FacebookAdapter(SocialAdapter):
         ext = data.get("post_id") or data.get("id", "")
         return PublishOutcome(True, external_id=ext,
                               external_url=f"https://www.facebook.com/{ext}" if ext else "")
+
+    # ---------- кросспостинг ----------
+    @staticmethod
+    def _parse_page_ref(ref: str) -> str:
+        """Ссылка на страницу или голый ID → ID/username для Graph API."""
+        ref = (ref or "").strip()
+        if not ref:
+            raise AdapterError("FB: укажите ссылку на страницу или её ID "
+                               "(напр. https://www.facebook.com/mypage или 123456789)")
+        if "profile.php" in ref:
+            m = re.search(r"[?&]id=(\d+)", ref)
+            if m:
+                return m.group(1)
+        ref = ref.split("?", 1)[0].rstrip("/")
+        if "://" in ref:
+            ref = ref.split("://", 1)[1]
+        # классические ссылки /pages/Имя/12345 — ID стоит последним сегментом
+        segs = [s for s in ref.split("/") if s and s.lower() != "pages"]
+        if not segs:
+            raise AdapterError("FB: не удалось разобрать ссылку на страницу")
+        # голый ID/username — как есть; полная ссылка — последний сегмент пути
+        return segs[-1]
+
+    async def fetch_source_items(self, source_ref: str, limit: int = 10,
+                                 account=None) -> list[SourceItem]:  # noqa: ANN001
+        """Лента своей страницы: новые посты для кросспостинга.
+
+        Чужие публичные страницы Graph API не отдаёт — нужна закрытая фича
+        Page Public Content Access; при попытке читаем понятную ошибку."""
+        creds = (account.credentials if account else None) or {}
+        token = creds.get("access_token")
+        if not token:
+            raise AdapterError("FB-кросспостинг: подключите аккаунт Facebook (нужен токен)")
+        pid = self._parse_page_ref(source_ref)
+        page_token = creds.get(f"token_{pid}")
+        if not page_token or page_token == token:
+            page_token = await self._resolve_page_token(pid, token)
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(f"{GRAPH}/{pid}/posts",
+                                 params={"fields": "id,message,created_time,full_picture",
+                                         "limit": limit, "access_token": page_token})
+        try:
+            data = r.json()
+        except ValueError as e:
+            raise AdapterError(f"FB: некорректный ответ Graph API ({r.status_code})") from e
+        if "error" in data:
+            err = data["error"]
+            msg = err.get("message", "") if isinstance(err, dict) else str(err)
+            if err.get("code") in (300, 10) or "Page Public Content Access" in msg:
+                raise AdapterError(
+                    "FB: чтение чужих страниц запрещено (нужна закрытая фича "
+                    "Page Public Content Access). Укажите свою страницу — ту, что "
+                    "подключена в разделе «Аккаунты»")
+            raise AdapterError(f"FB: {msg}")
+
+        items: list[SourceItem] = []
+        for p in data.get("data", []):
+            media = []
+            if p.get("full_picture"):
+                media.append({"url": p["full_picture"], "kind": "photo"})
+            text = p.get("message", "")
+            if text or media:
+                items.append(SourceItem(
+                    external_id=str(p["id"]), text=text, media=media,
+                    url=f"https://www.facebook.com/{p['id']}"))
+        return items
 
     async def delete(self, page, external_id: str) -> bool:  # noqa: ANN001
         pid = page.social_page_id

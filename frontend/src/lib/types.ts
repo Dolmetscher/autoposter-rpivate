@@ -107,6 +107,7 @@ export interface CrosspostSource {
   only_with_media: boolean
   keyword_filter: string
   poll_interval_min: number
+  delay_minutes: number
   active: boolean
   last_polled_at: string | null
 }

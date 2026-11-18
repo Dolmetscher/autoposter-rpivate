@@ -8,7 +8,7 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
   const [form, setForm] = useState({
     source_id: 9, source_ref: '', name: '', rewrite_enabled: false,
     only_with_media: false, keyword_filter: '', poll_interval_min: 15,
-    target_page_ids: [] as number[],
+    delay_minutes: 0, target_page_ids: [] as number[],
   })
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
@@ -21,9 +21,10 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
     id: 30, slug: 'rss', name: 'RSS-лента', implemented: true, experimental: false,
     oauth: false, capabilities: [], color: '#f26522',
   }
-  const crosspostable = [...sources.filter((s) => [1, 9, 17].includes(s.id)), rssSource]
+  const crosspostable = [...sources.filter((s) => [1, 3, 9, 17].includes(s.id)), rssSource]
   const refHint = (sid: number) =>
     sid === 1 ? 'id группы ВК, напр. -12345' :
+    sid === 3 ? 'ссылка на свою страницу FB или её ID' :
     sid === 9 ? '@канал или t.me/канал' :
     sid === 17 ? 'channel_id YouTube (UC…)' :
     'URL RSS-фида, напр. https://blog.example/feed'
@@ -98,6 +99,11 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
               <input type="number" min={5} value={form.poll_interval_min}
                      onChange={(e) => setForm({ ...form, poll_interval_min: Number(e.target.value) })} />
             </label>
+            <label className="field">
+              Отложить публикацию, минут (0 = сразу)
+              <input type="number" min={0} value={form.delay_minutes}
+                     onChange={(e) => setForm({ ...form, delay_minutes: Number(e.target.value) })} />
+            </label>
           </div>
           <label className="field" style={{ margin: '10px 0' }}>
             Слова-фильтры через запятую (пусто = все посты)
@@ -153,6 +159,7 @@ export default function Crosspost({ sources, accounts }: { sources: SourceInfo[]
                 <td>
                   <div className="hint">
                     каждые {x.poll_interval_min} мин
+                    {x.delay_minutes ? ` · отложка ${x.delay_minutes} мин` : ''}
                     {x.rewrite_enabled ? ' · рерайт AI' : ''}
                     {x.only_with_media ? ' · только с медиа' : ''}
                     {x.keyword_filter ? ` · фильтр: ${x.keyword_filter}` : ''}
