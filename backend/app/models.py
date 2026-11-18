@@ -160,7 +160,7 @@ class PostTemplate(Base):
 class MediaFile(Base):
     __tablename__ = "media_files"
 
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # строковый id как у hooppy
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # строковый id вида k3f9x2m1qp_z8w4v6n2rt
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     type: Mapped[str] = mapped_column(String(16))  # photo | video | document
     name: Mapped[str] = mapped_column(String(512), default="")

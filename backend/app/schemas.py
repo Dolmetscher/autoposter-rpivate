@@ -118,7 +118,7 @@ class TextIn(BaseModel):
 
 
 class PostIn(BaseModel):
-    """Внутренний payload редактора (UI). Публичный API использует hooppy-формат."""
+    """Внутренний payload редактора (UI). Публичный API использует свой формат (api/public)."""
     texts: list[TextIn] = []
     media_ids: list[str] = []
     document_ids: list[str] = []

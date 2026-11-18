@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends
 
 from ..deps import guard_role
-from .public import hooppy, rss_out, yookassa
+from .public import public_api, rss_out, yookassa
 from .web import (accounts, ai, analytics, auth, billing, crosspost, dashboard,
                   files, oauth, posts, projects, schedules, settings_api,
                   sources, team, templates)
@@ -44,6 +44,6 @@ api_router.include_router(auth_router, prefix="/api/web")
 api_router.include_router(oauth_router, prefix="/api/web")
 api_router.include_router(public_router, prefix="/api/web")
 api_router.include_router(guarded, prefix="/api/web")
-api_router.include_router(hooppy.router, prefix="/api")
+api_router.include_router(public_api.router, prefix="/api")
 api_router.include_router(yookassa.router, prefix="/api")
 api_router.include_router(rss_out_router, prefix="/api/public")

@@ -1,7 +1,7 @@
-"""Реестр соцсетей. source_id повторяет нумерацию hooppy там, где она известна:
+"""Реестр соцсетей и их source_id:
 ВКонтакте=1, Одноклассники=2, Facebook=3, Twitter/X=4, Instagram=6, Telegram=9,
 TikTok=14, YouTube=17. Свои константы: Дзен=20, Песочница=99.
-Telegram объединён в один source_id (у hooppy каналы=9 и аккаунты=11 разделены)."""
+Telegram использует один source_id и для каналов, и для аккаунтов."""
 from dataclasses import dataclass
 
 C_POST = "post"

@@ -10,7 +10,7 @@ def utcnow() -> datetime:
 
 
 def gen_file_id() -> str:
-    """Идентификатор файла в стиле hooppy: qb0ips21yr_6f1sy4sflx"""
+    """Идентификатор файла вида qb0ips21yr_6f1sy4sflx"""
     import random
 
     rng = random.SystemRandom()

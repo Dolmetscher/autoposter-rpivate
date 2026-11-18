@@ -1,4 +1,4 @@
-"""Публичный API в формате hooppy: /accounts, /posts, /files/... с Bearer API-токеном."""
+"""Публичный API: /accounts, /posts, /files/... с Bearer API-токеном."""
 from .conftest import upload_photo
 
 
@@ -50,7 +50,7 @@ async def test_public_post_lifecycle(client, auth_headers, mock_pages):
     photo = r.json()["photo"]
     assert photo["type"] == "photo" and "file_path" in photo
 
-    # создание поста в формате hooppy: отложенная публикация
+    # создание поста через публичный API: отложенная публикация
     r = await client.post("/api/posts", headers=auth(token), json={
         "publication_when_type": 2,
         "publication_how_type": 1,

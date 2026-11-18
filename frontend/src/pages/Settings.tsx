@@ -298,7 +298,7 @@ export default function SettingsPage({ accounts }: { accounts: Account[] }) {
           <button onClick={createToken}>＋ Создать токен</button>
         </div>
         <p className="hint">Используйте как <code>Authorization: Bearer ap_…</code> —
-          формат запросов как у hooppy: <code>GET /api/accounts</code>, <code>POST /api/posts</code> и т.д.
+          запросы вида <code>GET /api/accounts</code>, <code>POST /api/posts</code> и т.д.
           Полная схема: <code>/docs</code> (Swagger).</p>
         {newToken && (
           <div>

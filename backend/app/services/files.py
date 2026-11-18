@@ -73,7 +73,7 @@ async def save_upload(user_id: int, file: UploadFile, s: AsyncSession,
 
 
 def media_out(mf: MediaFile) -> dict:
-    """Ответ в форме hooppy (Photo/Video/Document)."""
+    """Ответ публичного API: Photo/Video/Document."""
     base = {
         "id": mf.id,
         "name": mf.name,

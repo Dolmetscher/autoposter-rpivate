@@ -127,7 +127,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Autoposter API", version="1.1.0",
                   description="Автопостинг в соцсети: публикация, расписание, "
                               "кросспостинг, рерайт, RSS, Telegram-ассистент. "
-                              "Публичный API совместим с hooppy.",
+                              "Публичный API: Bearer ap_…, схема в /docs.",
                   lifespan=lifespan)
     app.add_middleware(CORSMiddleware,
                        allow_origins=["*"],

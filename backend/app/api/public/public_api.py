@@ -1,4 +1,4 @@
-"""Публичный API hooppy-формы. Авторизация: Authorization: Bearer <api_token>.
+"""Публичный API. Авторизация: Authorization: Bearer <api_token>.
 Пути: /accounts, /accounts/pages, /posts, /posts/projects, /posts/schedules,
 /files/media/upload, /files/documents/upload, /posts/{id}, /posts/batch/delete."""
 from __future__ import annotations
