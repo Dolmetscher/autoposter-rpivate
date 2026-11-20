@@ -53,8 +53,8 @@ export default function Dashboard() {
           {data.logs.map((l) => (
             <div key={l.id} style={{ padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
               <div className="row" style={{ justifyContent: 'space-between' }}>
-                <span className={`badge ${l.level === 'success' ? 'ok' : l.level === 'error' ? 'err' : 'mut'}`}>
-                  {l.level === 'success' ? 'успех' : l.level === 'error' ? 'ошибка' : 'инфо'}
+                <span className={`badge ${l.level === 'success' ? 'ok' : l.level === 'error' ? 'err' : l.level === 'warning' ? 'wait' : 'mut'}`}>
+                  {l.level === 'success' ? 'успех' : l.level === 'error' ? 'ошибка' : l.level === 'warning' ? 'внимание' : 'инфо'}
                 </span>
                 <span className="hint">{fmtDateIn(l.created_at, tz)}</span>
               </div>

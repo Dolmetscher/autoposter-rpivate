@@ -249,7 +249,7 @@ class PublicationLog(Base):
     post_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    level: Mapped[str] = mapped_column(String(16), default="info")  # info | success | error
+    level: Mapped[str] = mapped_column(String(16), default="info")  # info | success | warning | error
     message: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 

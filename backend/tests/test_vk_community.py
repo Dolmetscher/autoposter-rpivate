@@ -251,7 +251,7 @@ def _fake_upload_client(monkeypatch, upload_payload, save_responses, captured):
     return orig
 
 
-async def _publish_with_photo(monkeypatch, upload_payload, save_responses):
+async def _publish_with_photo(monkeypatch, upload_payload, save_responses, text="Материал"):
     """Публикует пост с фото через подменённый клиент VK."""
     from app.integrations.base import PublishContent
 
@@ -264,7 +264,7 @@ async def _publish_with_photo(monkeypatch, upload_payload, save_responses):
     monkeypatch.setattr("app.integrations.vk.read_media_bytes", fake_read)
     try:
         out = await _adapter().publish(
-            _page(_FakeAccount()), PublishContent(text="Материал", media=[_Media()]))
+            _page(_FakeAccount()), PublishContent(text=text, media=[_Media()]))
     finally:
         import httpx as _httpx
         _httpx.AsyncClient = orig
@@ -308,9 +308,68 @@ async def test_photo_upload_sends_ascii_filename(account, monkeypatch):
     assert content_type == "image/png"
 
 
+async def test_cmyk_photo_normalized_before_upload(account, monkeypatch):
+    """Инцидент 20.11.2026: CMYK-JPEG серверы загрузки ВК молча отвергали
+    (9 попыток загрузки, ни одного photos.saveWallPhoto — пост не вышел в ВК).
+    Теперь файл перекодируется в RGB-JPEG ещё ДО отправки на pu.vk.com,
+    даже если расширение имени врёт (.png)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("CMYK", (80, 50), (10, 20, 30, 5)).save(buf, "JPEG")
+    cmyk = buf.getvalue()
+
+    captured = {}
+    orig = _fake_upload_client(
+        monkeypatch, {"server": 856312, "photo": BLOB, "hash": "abc123"},
+        [{"response": [{"id": 456, "owner_id": -987}]}], captured)
+
+    async def fake_read(media):
+        return cmyk
+
+    monkeypatch.setattr("app.integrations.vk.read_media_bytes", fake_read)
+    from app.integrations.base import PublishContent
+    try:
+        out = await _adapter().publish(
+            _page(_FakeAccount()), PublishContent(text="CMYK-тест", media=[_Media()]))
+    finally:
+        import httpx as _httpx
+        _httpx.AsyncClient = orig
+
+    assert out.ok
+    assert not out.warning
+    name, payload, content_type = captured["files"]["photo"]
+    img = Image.open(BytesIO(payload))
+    assert img.mode == "RGB"
+    assert img.format == "JPEG"
+    assert name.endswith(".jpg")
+    assert content_type == "image/jpeg"
+
+
 async def test_photo_upload_rejected_by_vk(account, monkeypatch):
-    """Сервер загрузки не принял файл (photo пустой) — понятная ошибка вместо
-    невнятного «photo is undefined» от photos.saveWallPhoto."""
+    """Сервер загрузки не принял файл (photo пустой) — пост больше не
+    пропадает целиком: публикуется текстом, а исходная ошибка (а не
+    невнятное «photo is undefined» от photos.saveWallPhoto) уходит
+    в предупреждение журнала."""
+    out, captured = await _publish_with_photo(
+        monkeypatch,
+        {"server": 856312, "photo": "", "hash": "abc123"},
+        [{"response": [{"id": 456, "owner_id": -987}]}],
+    )
+
+    assert out.ok
+    assert "без фото" in out.warning
+    assert "не принял файл" in out.warning
+    assert "photo is undefined" not in out.warning
+    wall = next(c for u, c in captured["calls"] if "wall.post" in u)
+    assert not wall["attachments"]
+
+
+async def test_photo_only_post_fails_when_upload_rejected(account, monkeypatch):
+    """В посте нет ничего, кроме неотправившегося фото — публиковать нечего,
+    публикация падает с исходной ошибкой загрузки."""
     from app.integrations.base import AdapterError
 
     with pytest.raises(AdapterError) as ei:
@@ -318,25 +377,22 @@ async def test_photo_upload_rejected_by_vk(account, monkeypatch):
             monkeypatch,
             {"server": 856312, "photo": "", "hash": "abc123"},
             [{"response": [{"id": 456, "owner_id": -987}]}],
+            text="",
         )
 
-    msg = str(ei.value)
-    assert "не принял файл" in msg
-    assert "photo is undefined" not in msg
+    assert "не принял файл" in str(ei.value)
 
 
 async def test_photo_upload_error_body(account, monkeypatch):
-    """Ошибка в ответе сервера загрузки — показываем текст VK."""
-    from app.integrations.base import AdapterError
+    """Ошибка в ответе сервера загрузки — её текст виден в предупреждении."""
+    out, _ = await _publish_with_photo(
+        monkeypatch,
+        {"error": {"error_code": 100, "error_msg": "Ошибка загрузки"}},
+        [{"response": [{"id": 456, "owner_id": -987}]}],
+    )
 
-    with pytest.raises(AdapterError) as ei:
-        await _publish_with_photo(
-            monkeypatch,
-            {"error": {"error_code": 100, "error_msg": "Ошибка загрузки"}},
-            [{"response": [{"id": 456, "owner_id": -987}]}],
-        )
-
-    assert "Ошибка загрузки" in str(ei.value)
+    assert out.ok
+    assert "Ошибка загрузки" in out.warning
 
 
 async def test_photo_upload_falls_back_to_photo_id(account, monkeypatch):
@@ -375,17 +431,16 @@ async def test_photo_upload_dict_response(account, monkeypatch):
 
 
 async def test_photo_upload_non_json_response(account, monkeypatch):
-    """Не-JSON ответ (прокси/заглушка) — понятная ошибка вместо исключения."""
-    from app.integrations.base import AdapterError
+    """Не-JSON ответ (прокси/заглушка) — пост публикуется текстом,
+    понятная ошибка про не-JSON ответ уходит в предупреждение."""
+    out, _ = await _publish_with_photo(
+        monkeypatch,
+        ValueError("Expecting value: line 1 column 1 (char 0)"),
+        [{"response": [{"id": 456, "owner_id": -987}]}],
+    )
 
-    with pytest.raises(AdapterError) as ei:
-        await _publish_with_photo(
-            monkeypatch,
-            ValueError("Expecting value: line 1 column 1 (char 0)"),
-            [{"response": [{"id": 456, "owner_id": -987}]}],
-        )
-
-    assert "не-JSON" in str(ei.value)
+    assert out.ok
+    assert "не-JSON" in out.warning
 
 
 def test_upload_filename_is_ascii():
@@ -423,12 +478,13 @@ GROUP_AUTH_ERROR = {"error": {"error_code": 27, "error_msg": "Group authorizatio
                                                             "method is unavailable with group auth."}}
 
 
-def _fake_album_client(monkeypatch, captured, *, get_upload_server_errors=0,
-                        create_album=True):
-    """Клиент ВК, где photos.getWallUploadServer недоступен для сообщества."""
-    import httpx as _httpx
+def _fake_album_client(monkeypatch, captured, *, albums=(555,), create_album=True):
+    """Клиент ВК, где photos.getWallUploadServer недоступен для сообщества.
 
-    state = {"get_upload_server": 0}
+    albums — список ID существующих альбомов сообщества (photos.getAlbums);
+    () — альбомов нет (придётся создавать), None — getAlbums недоступен.
+    """
+    import httpx as _httpx
 
     class FakeClient:
         def __init__(self, *a, **kw):
@@ -445,10 +501,14 @@ def _fake_album_client(monkeypatch, captured, *, get_upload_server_errors=0,
             captured.setdefault("headers", []).append(kw.get("headers") or {})
             if "getWallUploadServer" in url:
                 return _RawResp(GROUP_AUTH_ERROR)
-            if "getUploadServer" in url:
-                state["get_upload_server"] += 1
-                if state["get_upload_server"] <= get_upload_server_errors:
+            if "getAlbums" in url:
+                captured["get_albums"] = data
+                if albums is None:
                     return _RawResp(GROUP_AUTH_ERROR)
+                return _RawResp({"response": {
+                    "count": len(albums),
+                    "items": [{"id": a, "title": f"Альбом {a}"} for a in albums]}})
+            if "getUploadServer" in url:
                 return _RawResp({"response": {
                     "upload_url": "https://pu.vk.com/c2/ss2/upload.php?act=do_add",
                     "album_id": (data or {}).get("album_id") or 555, "user_id": 987}})
@@ -493,10 +553,14 @@ async def _publish_with_album_fallback(monkeypatch, **kwargs):
 
 async def test_photo_upload_falls_back_to_album(account, monkeypatch):
     """Ключ сообщества не может вызвать photos.getWallUploadServer (ошибка 27) —
-    тогда грузим фото через альбом сообщества: photos.getUploadServer + photos.save."""
+    тогда грузим фото в существующий альбом сообщества: photos.getAlbums →
+    photos.getUploadServer + photos.save, новые альбомы не плодятся."""
     out, captured = await _publish_with_album_fallback(monkeypatch)
 
     assert out.ok
+    assert not out.warning
+    assert captured["get_albums"]["group_id"] == 987
+    assert "create_album" not in captured, "должен использоваться существующий альбом"
     wall = next(c for u, c in captured["calls"] if "wall.post" in u)
     assert wall["attachments"] == "photo-987_777"
     save = captured["photos_save"]
@@ -505,10 +569,9 @@ async def test_photo_upload_falls_back_to_album(account, monkeypatch):
     assert save["group_id"] == 987
 
 
-async def test_photo_upload_creates_album_when_upload_server_denied(account, monkeypatch):
-    """Если и photos.getUploadServer недоступен — создаём альбом автопостера."""
-    out, captured = await _publish_with_album_fallback(
-        monkeypatch, get_upload_server_errors=1)
+async def test_photo_upload_creates_album_when_no_albums(account, monkeypatch):
+    """В сообществе нет ни одного альбома — создаём альбом «Автопостер»."""
+    out, captured = await _publish_with_album_fallback(monkeypatch, albums=())
 
     assert out.ok
     assert captured["create_album"]["group_id"] == 987

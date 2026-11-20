@@ -28,6 +28,9 @@ class PublishOutcome:
     external_id: str = ""
     external_url: str = ""
     error: str = ""
+    # Пост вышел, но не полностью (например, без части фото) — текст уходит
+    # в журнал публикации уровнем «warning», чтобы пользователь узнал.
+    warning: str = ""
 
 
 @dataclass

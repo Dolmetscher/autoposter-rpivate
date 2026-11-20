@@ -263,6 +263,13 @@ async def publish_target(s: AsyncSession, post: Post, target: PostTarget) -> Non
             target.delete_after_at = target.published_at + timedelta(days=days, hours=hours)
         add_log(s, post.user_id, f"Опубликовано в «{page.social_page_name}»: {outcome.external_url}",
                 "success", post_id=post.id, target_id=target.id, source_id=target.source_id)
+        # Пост вышел, но не полностью (например, ВК отверг фото, и пост ушёл
+        # текстом) — предупреждаем в журнале, чтобы это не прошло незамеченным
+        warn = getattr(outcome, "warning", "")
+        if warn:
+            add_log(s, post.user_id, f"«{page.social_page_name}»: {warn}",
+                    "warning", post_id=post.id, target_id=target.id,
+                    source_id=target.source_id)
     else:
         target.status = "failed"
         target.error = outcome.error or "Неизвестная ошибка"

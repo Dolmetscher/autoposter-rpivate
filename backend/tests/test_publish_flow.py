@@ -106,6 +106,32 @@ async def test_auto_delete_after_publish(client, auth_headers, mock_pages):
         assert target.status == "deleted"
 
 
+async def test_publish_warning_logged(client, auth_headers, mock_pages, monkeypatch):
+    """Пост вышел не полностью (например, ВК отверг фото — пост ушёл текстом):
+    в журнал публикуется запись уровня «warning», пользователь в курсе."""
+    from app.integrations import mock as mock_adapter
+    from app.integrations.base import PublishOutcome
+
+    async def fake_publish(self, page, content):
+        return PublishOutcome(True, external_id="1_2",
+                              external_url="https://mock.local/wall1_2",
+                              warning="Пост опубликован без фото — сервер загрузки "
+                                      "не принял файл")
+
+    monkeypatch.setattr(mock_adapter.MockAdapter, "publish", fake_publish)
+    r = await client.post("/api/web/posts", headers=auth_headers, json={
+        "texts": [{"text": "Текст без фото"}],
+        "page_ids": mock_pages[:1],
+        "publication_when_type": 1,
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "published", r.text
+
+    dash = (await client.get("/api/web/dashboard", headers=auth_headers)).json()
+    assert any(l["level"] == "warning" and "без фото" in l["message"]
+               for l in dash["logs"]), dash["logs"]
+
+
 async def test_projects_and_schedules_crud(client, auth_headers):
     r = await client.post("/api/web/projects", headers=auth_headers,
                           json={"name": "Проект про котиков", "settings": {}})

@@ -13,8 +13,10 @@ photo-<group>_<id> публикуется ключом сообщества.
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 import re
+from io import BytesIO
 
 import httpx
 
@@ -24,6 +26,25 @@ from .base import (AdapterError, PageInfo, PublishContent, PublishOutcome, Socia
 
 API = "https://api.vk.com/method"
 V = "5.199"
+
+log = logging.getLogger(__name__)
+
+# Технические требования ВК к фотографиям (vk.com/faq18320, dev.vk.com/ru/api/upload):
+# форматы GIF/JPG/JPEG/PNG, файл до 50 МБ, сумма сторон до 14000 px. Всё остальное
+# (CMYK-JPEG из графических редакторов, WebP/HEIC/TIFF, гигантские разрешения)
+# серверы загрузки pu.vk.com отвергают МОЛЧА: HTTP 200 с пустым/отсутствующим photo
+# и нулём вложений — пост в итоге не выходит в ВК вообще, хотя ОК/Telegram/Facebook
+# тот же файл принимают. Поэтому перед загрузкой фото приводим к требованиям ВК.
+VK_MAX_PHOTO_BYTES = 50 * 1024 * 1024    # лимит ВК: размер файла
+VK_PHOTO_BYTES_TARGET = 45 * 1024 * 1024 # пережать, если больше (запас до лимита)
+VK_MAX_SIDE_SUM = 14000                  # лимит ВК: сумма сторон, px
+VK_SIDE_SUM_TARGET = 13000               # ужмаем до этого значения (запас)
+
+try:  # Pillow нужен только для подготовки фото к загрузке
+    from PIL import Image as _PILImage, ImageOps as _PILImageOps
+except ImportError:  # без Pillow файлы уходят как есть — как до этого правки
+    _PILImage = None
+    _PILImageOps = None
 
 
 class VKAdapter(SocialAdapter):
@@ -211,11 +232,120 @@ class VKAdapter(SocialAdapter):
             raise AdapterError(f"VK: неожиданный ответ при сохранении файла: {items!r}")
         return items
 
+    @classmethod
+    def _prepare_photo(cls, content: bytes, filename: str,
+                       ctype: str) -> tuple[bytes, str, str]:
+        """Приводит фото к требованиям ВК до загрузки (см. константы выше).
+
+        Чистые JPEG/PNG в пределах лимитов не перекодируются (ноль потерь и
+        лишней работы — как у постов, которые публиковались нормально).
+        Перекодируются: CMYK/16-бит и прочие «неродные» режимы, WebP/HEIC/TIFF/BMP,
+        слишком большие разрешения (сумма сторон > 14000 px) и файлы ближе
+        к 50 МБ. Прозрачный PNG сохраняется PNG, остальное — JPEG (с постепенным
+        снижением качества и даунскейлом, пока файл не влезет в лимит).
+        Файл, который Pillow не разбирает, уходит как есть — пусть отвечает VK.
+        """
+        if (_PILImage is None or not content
+                or ctype.startswith("video/") or filename.lower().endswith(".gif")):
+            return content, filename, ctype
+        try:
+            img = _PILImage.open(BytesIO(content))
+            if (img.format or "").upper() == "JPEG" and sum(img.size) > VK_MAX_SIDE_SUM:
+                # draft-режим JPEG декодирует сразу уменьшенным — без гигантского RAM
+                try:
+                    scale = VK_SIDE_SUM_TARGET / float(img.width + img.height)
+                    img.draft("RGB", (max(1, round(img.width * scale)),
+                                       max(1, round(img.height * scale))))
+                except Exception:
+                    pass
+            img.load()
+        except Exception:
+            return content, filename, ctype
+
+        fmt = (img.format or "").upper()
+        mode = img.mode
+        has_alpha = (mode in ("RGBA", "LA", "PA")
+                     or (mode == "P" and "transparency" in img.info))
+        bad_mode = (mode in ("CMYK", "YCCK", "I", "F") or mode.startswith("I;16"))
+        bad_format = fmt not in ("JPEG", "PNG")
+        too_big = len(content) > VK_PHOTO_BYTES_TARGET
+        too_long = img.width + img.height > VK_MAX_SIDE_SUM
+        if not (bad_mode or bad_format or too_big or too_long):
+            return content, filename, ctype
+
+        try:
+            return cls._reencode_photo(img, fmt, has_alpha, too_big, filename)
+        except Exception:
+            # перекодировка сорвалась (экзотический режим/битрый кадр) —
+            # отдаём исходный файл: ВК может и принять, а текстовый фолбэк
+            # публикации в любом случае не даст посту пропасть целиком
+            log.warning("VK: не удалось подготовить фото к загрузке, файл уходит как есть",
+                        exc_info=True)
+            return content, filename, ctype
+
+    @staticmethod
+    def _reencode_photo(img, fmt: str, has_alpha: bool, too_big: bool,
+                        filename: str) -> tuple[bytes, str, str]:
+        try:
+            img = _PILImageOps.exif_transpose(img) or img
+        except Exception:
+            pass
+        if img.width + img.height > VK_MAX_SIDE_SUM:
+            scale = VK_SIDE_SUM_TARGET / float(img.width + img.height)
+            img = img.resize((max(1, round(img.width * scale)),
+                              max(1, round(img.height * scale))), _PILImage.LANCZOS)
+
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+
+        def _png_bytes() -> bytes:
+            buf = BytesIO()
+            img.save(buf, "PNG", optimize=True)
+            return buf.getvalue()
+
+        def _jpeg_bytes(image, quality: int) -> bytes:  # noqa: ANN001
+            buf = BytesIO()
+            image.save(buf, "JPEG", quality=quality, optimize=True)
+            return buf.getvalue()
+
+        def _flatten(image):  # noqa: ANN001
+            if image.mode == "RGBA":
+                bg = _PILImage.new("RGB", image.size, (255, 255, 255))
+                bg.paste(image, mask=image.split()[-1])
+                return bg
+            if image.mode not in ("RGB", "L"):
+                return image.convert("RGB")
+            return image
+
+        # 1) Прозрачность (в любом исходном формате) или «родной» палитровый/
+        #    серый PNG и при этом нет проблемы с размером — сохраняем PNG:
+        #    прозрачность дороже, ВК её принимает. PNG не влез в лимит —
+        #    уйдём ниже в JPEG (прозрачность ляжет на белый фон).
+        keep_png = (has_alpha or (fmt == "PNG" and img.mode in ("L", "P", "1")))
+        if keep_png and not too_big:
+            data = _png_bytes()
+            if len(data) <= VK_PHOTO_BYTES_TARGET:
+                return data, f"{stem}.png", "image/png"
+        # 2) JPEG: без альфы (или с альфой, расплющенной на белый), лесенка качества
+        img = _flatten(img)
+        data = b""
+        for _ in range(8):
+            for quality in (88, 72, 56):
+                data = _jpeg_bytes(img, quality)
+                if len(data) <= VK_PHOTO_BYTES_TARGET:
+                    return data, f"{stem}.jpg", "image/jpeg"
+            if img.width <= 64 and img.height <= 64:
+                break  # меньше некуда — отдаём что получилось
+            img = img.resize((max(64, round(img.width * 0.75)),
+                              max(64, round(img.height * 0.75))), _PILImage.LANCZOS)
+        return data, f"{stem}.jpg", "image/jpeg"
+
     async def _upload_photo(self, client: httpx.AsyncClient, token: str, group_id: int | None,
                             media) -> str:  # noqa: ANN001
         filename = upload_filename(media, "photo.jpg")
         ctype = mimetypes.guess_type(filename)[0] or "image/jpeg"
         content = await read_media_bytes(media)
+        # ВК привередлив к форматам (см. _prepare_photo) — готовим файл до загрузки
+        content, filename, ctype = self._prepare_photo(content, filename, ctype)
 
         errors: list[str] = []
         for attempt in range(3):
@@ -229,16 +359,16 @@ class VKAdapter(SocialAdapter):
             except httpx.HTTPError as e:
                 errors.append(f"сетевая ошибка при загрузке фото ({e.__class__.__name__})")
         if group_id:
-            for album_id in (None, "create"):
-                try:
-                    if album_id == "create":
-                        album_id = await self._create_album(client, token, group_id)
-                    return await self._album_photo(client, token, group_id, album_id,
-                                                   content, filename, ctype)
-                except AdapterError as e:
-                    errors.append(str(e))
-                except httpx.HTTPError as e:
-                    errors.append(f"сетевая ошибка ({e.__class__.__name__})")
+            # Фолбэк через альбом сообщества: берём существующий альбом
+            # (photos.getAlbums), а если нет — создаём «Автопостер». Без album_id
+            # photos.getUploadServer в альбом сообщества не работает — вызов с
+            # пустым album_id всегда падает с ошибкой 100 ещё до загрузки файла.
+            try:
+                album_id = await self._group_album_id(client, token, group_id)
+                return await self._album_photo(client, token, group_id, album_id,
+                                               content, filename, ctype)
+            except (AdapterError, httpx.HTTPError) as e:
+                errors.append(str(e))
         try:
             return await self._messages_photo(client, token, group_id, content,
                                               filename, ctype)
@@ -321,6 +451,25 @@ class VKAdapter(SocialAdapter):
             "photos_list": photos_list, "hash": payload.get("hash", "")})
         items = self._unwrap("photos.save", saved)
         return self._photo_attachment(items, group_id, payload)
+
+    async def _group_album_id(self, client: httpx.AsyncClient, token: str,
+                              group_id: int | None) -> int:
+        """ID альбома сообщества для фолбэка загрузки фото: существующий альбом
+        (photos.getAlbums — и повторные посты не плодят новые альбомы), иначе
+        новый «Автопостер» (photos.createAlbum — нужны права администратора)."""
+        gid = int(abs(group_id or 0))
+        try:
+            r = await client.post(f"{API}/photos.getAlbums", data={
+                "access_token": token, "v": V, "group_id": gid, "need_covers": 0})
+            info = self._unwrap("photos.getAlbums", r)
+            items = info.get("items") if isinstance(info, dict) else None
+            if isinstance(items, list):
+                for alb in items:
+                    if isinstance(alb, dict) and alb.get("id"):
+                        return int(alb["id"])
+        except (AdapterError, httpx.HTTPError):
+            pass  # альбомы не читаются — попробуем создать свой
+        return await self._create_album(client, token, group_id)
 
     async def _create_album(self, client: httpx.AsyncClient, token: str,
                             group_id: int | None) -> int:
@@ -440,9 +589,14 @@ class VKAdapter(SocialAdapter):
         # а не «photo», как при загрузке фото на стену.
         field = "file" if media.type == "photo" else "video_file"
         try:
-            up = await client.post(upload_url,
-                                   files={field: (upload_filename(media, "media.jpg"),
-                                                  await read_media_bytes(media))})
+            fname = upload_filename(media, "media.jpg")
+            raw = await read_media_bytes(media)
+            if media.type == "photo":
+                # у историй те же серверы загрузки и требования к файлам
+                # (CMYK/экзотику они тоже молча отвергают) — готовим фото
+                raw, fname, _ = self._prepare_photo(
+                    raw, fname, mimetypes.guess_type(fname)[0] or "image/jpeg")
+            up = await client.post(upload_url, files={field: (fname, raw)})
         except httpx.HTTPError as e:
             raise AdapterError(
                 f"VK истории: сетевая ошибка при загрузке ({e.__class__.__name__})") from e
@@ -524,6 +678,8 @@ class VKAdapter(SocialAdapter):
                         external_url=f"https://vk.com/video{first}")
 
                 media_attachments: list[str] = []
+                upload_warnings: list[str] = []
+                photo_error: Exception | None = None
                 for media in content.media:
                     if st.get("publish_as_clips") and media.type == "video":
                         att = await self._upload_video(client, upload_token, group_id, media)
@@ -540,8 +696,19 @@ class VKAdapter(SocialAdapter):
                             media_attachments.append(
                                 await self._upload_doc(client, upload_token, group_id, media))
                         else:
-                            media_attachments.append(
-                                await self._upload_photo(client, upload_token, group_id, media))
+                            try:
+                                media_attachments.append(
+                                    await self._upload_photo(client, upload_token, group_id, media))
+                            except Exception as e:  # noqa: BLE001
+                                # Фото не прошло ни одним путём (серверы загрузки ВК
+                                # молча отвергают CMYK/экзотику/перегабарит, файл мог
+                                # быть стёрт автоочисткой) — не роняем весь пост:
+                                # публикуем текст и остальные вложения, в журнал
+                                # уходит предупреждение. Если кроме фото в посте
+                                # ничего нет — ниже честно падаем с исходной ошибкой.
+                                photo_error = e
+                                upload_warnings.append(
+                                    f"фото «{media_filename(media, 'без имени')}»: {e}")
                     elif media.type == "video":
                         media_attachments.append(
                             await self._upload_video(client, upload_token, group_id, media))
@@ -574,6 +741,11 @@ class VKAdapter(SocialAdapter):
                         attachments.append(link)
                         link_in_attachments = True
 
+                if upload_warnings and not message and not attachments:
+                    # кроме неотправившегося фото в посте ничего нет — публиковать
+                    # нечего, честно роняем публикацию с исходной ошибкой загрузки
+                    # (а не невнятным «пустой пост»)
+                    raise photo_error
                 if not message and not attachments:
                     raise AdapterError("VK: пустой пост (нет текста и вложений)")
 
@@ -607,8 +779,12 @@ class VKAdapter(SocialAdapter):
                 post_id = resp["post_id"]
                 if st.get("pin_post"):
                     await self.call("wall.pin", token, owner_id=owner, post_id=post_id)
-                return PublishOutcome(True, external_id=f"{owner}_{post_id}",
-                                      external_url=f"https://vk.com/wall{owner}_{post_id}")
+                outcome = PublishOutcome(True, external_id=f"{owner}_{post_id}",
+                                         external_url=f"https://vk.com/wall{owner}_{post_id}")
+                if upload_warnings:
+                    outcome.warning = ("Пост опубликован без фото — "
+                                       + "; ".join(upload_warnings))
+                return outcome
         except httpx.HTTPError as e:
             raise AdapterError(
                 f"VK: сетевая ошибка при публикации ({e.__class__.__name__})") from e
