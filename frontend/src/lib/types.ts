@@ -22,6 +22,7 @@ export interface Account {
   social_account_photo: string
   status: string
   network?: string // slug соцсети: vk | ok | facebook | telegram | …
+  secrets_broken?: boolean // токены аккаунта не расшифровались (сменился SECRET_KEY)
   pages: Page[]
 }
 

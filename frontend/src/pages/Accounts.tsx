@@ -146,6 +146,11 @@ export default function Accounts({ sources, reload }: { sources: SourceInfo[]; r
                         ? <img src={a.social_account_photo} width={28} height={28} style={{ borderRadius: '50%' }} alt="" />
                         : <span className="dot" style={{ background: sourceColor(sources, a.source_id), width: 14, height: 14 }} />}
                       {a.social_account_name || `Аккаунт #${a.id}`}
+                      {a.secrets_broken && (
+                        <span className="badge wait" title="Токены не расшифровались — обновите стек или переподключите аккаунт">
+                          ⚠️ ключи не читаются
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td>

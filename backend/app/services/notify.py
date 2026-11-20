@@ -10,13 +10,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Post, User, UserSettings
+from .crypto import FailedSecrets
 
 log = logging.getLogger("notify")
 
 
 async def get_settings(s: AsyncSession, user_id: int) -> dict:
     row = await s.get(UserSettings, user_id)
-    return (row.data if row else {}).get("notify", {})
+    if row is None:
+        return {}
+    data = row.data
+    if isinstance(data, FailedSecrets):
+        # весь блок не расшифровался (сменился ключ шифрования) — возвращаем
+        # маркер: settings_api покажет в Настройках, что токен бота не читается
+        return data
+    return data.get("notify", {})
 
 
 async def save_settings(s: AsyncSession, user_id: int, notify: dict) -> None:

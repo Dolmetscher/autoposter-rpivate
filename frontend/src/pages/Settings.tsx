@@ -10,7 +10,13 @@ interface NotifyConfig {
   on_success: boolean
   inbox_page_ids: number[]
 }
-interface SettingsData { timezone: string; llm_config: LlmConfig; notify: NotifyConfig }
+interface SettingsData {
+  timezone: string
+  llm_config: LlmConfig
+  notify: NotifyConfig
+  llm_secrets_broken?: boolean   // LLM-ключ не расшифровался (сменился SECRET_KEY)
+  notify_secrets_broken?: boolean // то же с токеном Telegram-бота
+}
 interface TokenRow { id: number; name: string; created_at: string; last_used_at: string | null }
 interface Plan { name: string; accounts: number; posts_month: number; sources: number; price: string; price_month?: number; price_year?: number }
 interface PlansData { plans: Record<string, Plan>; current: string; usage: { accounts: number; posts_month: number; sources: number } }
@@ -144,6 +150,12 @@ export default function SettingsPage({ accounts }: { accounts: Account[] }) {
             API-ключ
             <input value={llm.api_key ?? ''} placeholder="sk-…"
                    onChange={(e) => setData({ ...data, llm_config: { ...llm, api_key: e.target.value } })} />
+            {data.llm_secrets_broken && (
+              <span className="field-alert">
+                ⚠️ Сохранённый ключ не расшифровался (сменился SECRET_KEY/CREDENTIALS_SECRET).
+                Введите ключ заново и сохраните настройки — на публикации это не влияет.
+              </span>
+            )}
           </label>
           <label className="field">
             Модель
@@ -169,6 +181,12 @@ export default function SettingsPage({ accounts }: { accounts: Account[] }) {
             Токен бота
             <input value={notify.bot_token ?? ''} placeholder="123456:ABC-DEF…"
                    onChange={(e) => setData({ ...data, notify: { ...notify, bot_token: e.target.value } })} />
+            {data.notify_secrets_broken && (
+              <span className="field-alert">
+                ⚠️ Сохранённый токен бота не расшифровался (сменился SECRET_KEY/CREDENTIALS_SECRET).
+                Введите токен заново и сохраните настройки.
+              </span>
+            )}
           </label>
           <label className="field">
             Привязанный чат

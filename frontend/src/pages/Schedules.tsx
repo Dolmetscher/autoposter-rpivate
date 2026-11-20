@@ -72,7 +72,7 @@ function DaysRow({ days, onChange }: { days: number[]; onChange: (d: number[]) =
                 className="secondary"
                 style={{
                   padding: '6px 9px',
-                  background: days.includes(d.n) ? 'var(--primary)' : '#eef1f8',
+                  background: days.includes(d.n) ? 'var(--primary)' : undefined,
                   color: days.includes(d.n) ? '#fff' : 'var(--text)',
                 }}
                 onClick={() => onChange(days.includes(d.n)

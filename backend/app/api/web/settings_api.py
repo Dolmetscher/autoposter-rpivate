@@ -39,14 +39,21 @@ def _mask_notify(cfg: dict) -> dict:
 @router.get("")
 async def get_settings(user: User = Depends(get_current_user),
                        s: AsyncSession = Depends(get_session)):
-    llm = dict(user.llm_config or {})
-    if llm.get("api_key"):
+    llm = user.llm_config if crypto.is_failed(user.llm_config) else dict(user.llm_config or {})
+    # llm_config не расшифровался — показываем пустым и подсвечиваем в Настройках:
+    # пользователь введёт ключ заново и сохранит
+    llm_broken = crypto.is_failed(user.llm_config)
+    if not llm_broken and llm.get("api_key"):
         llm["api_key"] = "***"
-    notify = _mask_notify(await notify_service.get_settings(s, user.id))
-    # true — какой-то из зашифрованных секретов (LLM-ключ, токены аккаунтов)
-    # не расшифровался — обычно сменился SECRET_KEY/CREDENTIALS_SECRET
+    notify_raw = await notify_service.get_settings(s, user.id)
+    notify_broken = crypto.is_failed(notify_raw)
+    notify = _mask_notify(notify_raw)
+    # Флаги по конкретным полям (маркер FailedSecrets у записи), а не глобальный
+    # счётчик ошибок: он «лип» и поднимал предупреждение, даже когда все ключи,
+    # влияющие на работу, были в порядке
     return {"timezone": user.timezone, "llm_config": llm, "notify": notify,
-            "secrets_broken": crypto.decrypt_failures() > 0}
+            "llm_secrets_broken": llm_broken,
+            "notify_secrets_broken": notify_broken}
 
 
 @router.put("")
@@ -60,13 +67,14 @@ async def update_settings(payload: SettingsIn, user: User = Depends(get_current_
             raise HTTPException(400, "Неизвестная таймзона")
         user.timezone = payload.timezone
     if payload.llm_config is not None:
-        cfg = user.llm_config or {}
+        cfg = user.llm_config if not crypto.is_failed(user.llm_config) else {}
         new = payload.llm_config.model_dump()
         if new.get("api_key") == "***":
             new["api_key"] = cfg.get("api_key", "")
         user.llm_config = new
     if payload.notify is not None:
         current = await notify_service.get_settings(s, user.id)
+        current = {} if crypto.is_failed(current) else current
         new = payload.notify.model_dump()
         if new.get("bot_token") == "***":
             new["bot_token"] = current.get("bot_token", "")
@@ -74,17 +82,26 @@ async def update_settings(payload: SettingsIn, user: User = Depends(get_current_
         new["chat_id"] = current.get("chat_id", "")
         await notify_service.save_settings(s, user.id, new)
     await s.commit()
-    llm = dict(user.llm_config or {})
-    if llm.get("api_key"):
+    llm = user.llm_config if crypto.is_failed(user.llm_config) else dict(user.llm_config or {})
+    llm_broken = crypto.is_failed(user.llm_config)
+    if not llm_broken and llm.get("api_key"):
         llm["api_key"] = "***"
-    notify = _mask_notify(await notify_service.get_settings(s, user.id))
-    return {"timezone": user.timezone, "llm_config": llm, "notify": notify}
+    notify_raw = await notify_service.get_settings(s, user.id)
+    notify_broken = crypto.is_failed(notify_raw)
+    return {"timezone": user.timezone, "llm_config": llm,
+            "notify": _mask_notify(notify_raw),
+            "llm_secrets_broken": llm_broken,
+            "notify_secrets_broken": notify_broken}
 
 
 @router.post("/notify/test")
 async def test_notify(user: User = Depends(get_current_user),
                       s: AsyncSession = Depends(get_session)):
     cfg = await notify_service.get_settings(s, user.id)
+    if crypto.is_failed(cfg):
+        raise HTTPException(400, "Настройки бота не расшифровались (сменился "
+                                "SECRET_KEY/CREDENTIALS_SECRET) — введите токен "
+                                "заново в разделе «Настройки» и сохраните")
     if not cfg.get("bot_token") or not cfg.get("chat_id"):
         raise HTTPException(400, "Бот не настроен: добавьте токен и отправьте /start боту")
     sent, err = await notify_service.send(cfg["bot_token"], cfg["chat_id"],

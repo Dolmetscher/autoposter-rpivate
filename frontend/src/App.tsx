@@ -30,7 +30,13 @@ function Shell() {
   const token = getToken()
   const [sources, setSources] = useState<SourceInfo[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
+  // токены какого-то аккаунта не расшифровались (сменился SECRET_KEY/
+  // CREDENTIALS_SECRET) — Layout покажет предупреждение. Флаг теперь приходит
+  // только по реальным проблемам токенов аккаунтов, а не «хоть что-то когда-то
+  // не расшифровалось» (например, нечитаемый LLM-ключ баннер не поднимает —
+  // о нём подсказка в Настройках).
   const [secretsBroken, setSecretsBroken] = useState(false)
+  const [bannerDismissed, setBannerDismissed] = useState(false)
   const metaLoaded = useRef(false)
 
   const reloadMeta = () => {
@@ -41,7 +47,11 @@ function Shell() {
     api.get<{ list: Account[]; secrets_broken?: boolean }>('/api/web/accounts')
       .then((d) => {
         setAccounts(d.list)
-        setSecretsBroken(!!d.secrets_broken)
+        const broken = !!d.secrets_broken
+        setSecretsBroken(broken)
+        // после переподключения аккаунтов проблема могла вернуться —
+        // показываем баннер заново (сброс «скрыто»)
+        if (broken) setBannerDismissed(false)
       }).catch(() => {})
   }
 
@@ -55,6 +65,7 @@ function Shell() {
       setSources([])
       setAccounts([])
       setSecretsBroken(false)
+      setBannerDismissed(false)
     }
   }, [token, location.pathname])
 
@@ -70,7 +81,8 @@ function Shell() {
   return (
     <Routes>
       <Route path="/login" element={<Navigate to="/" replace />} />
-      <Route element={<Layout secretsBroken={secretsBroken} />}>
+      <Route element={<Layout secretsBroken={secretsBroken && !bannerDismissed}
+                               onDismissBanner={() => setBannerDismissed(true)} />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/posts" element={<Posts sources={sources} />} />
         <Route path="/posts/new" element={<PostEditor sources={sources} accounts={accounts} />} />

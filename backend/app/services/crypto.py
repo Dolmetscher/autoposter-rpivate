@@ -16,14 +16,35 @@ log = logging.getLogger("crypto")
 _fernet: Fernet | None = None
 
 # Сколько секретов не расшифровалось с момента последнего сохранения нового
-# секрета (или старта процесса). Флаг для UI: «токены не читаются — проверьте
-# SECRET_KEY/CREDENTIALS_SECRET или заново введите секреты».
+# секрета (или старта процесса) — только для логов/метрик. Решение «показывать
+# ли предупреждение» принимается по маркерам FailedSecrets у конкретных записей,
+# а не по этому счётчику: он «липкий» и растёт при чтении любого поля
+# (включая не влияющие на публикации), поэтому непригоден для UI.
 _decrypt_failures = 0
 
 # Контексты (users.llm_config, social_accounts.credentials...), по которым мы
 # уже предупредили в логе: чтобы не спамить на каждый запрос, поле пользователя
 # читается при каждом обращении к API.
 _warned: set[str] = set()
+
+
+class FailedSecrets(dict):
+    """Маркер «этот секрет не расшифровался» (сменился SECRET_KEY/CREDENTIALS_SECRET).
+
+    Ведёт себя как пустой dict (старый код продолжал работать: адаптер увидит
+    «пустые credentials»), но API-эндпоинты проверяют isinstance(value, FailedSecrets)
+    и честно сообщают UI, какое именно поле не читается — вместо глобального
+    флага «хоть что-то когда-то не расшифровалось», который висел вечно."""
+    __slots__ = ("context",)
+
+    def __init__(self, context: str = ""):
+        super().__init__()
+        self.context = context
+
+
+def is_failed(value) -> bool:
+    """Не расшифровался ли секрет (маркер FailedSecrets)."""
+    return isinstance(value, FailedSecrets)
 
 
 def decrypt_failures() -> int:
@@ -73,7 +94,7 @@ def decrypt_value(stored, context: str = ""):
                         "Чтобы убрать предупреждение, заново сохраните соответствующий "
                         "раздел (например, «Настройки» для llm_config или аккаунт — для "
                         "токенов соцсети)", where, e)
-        return {}
+        return FailedSecrets(context)
 
 
 class EncryptedJSON(TypeDecorator):
@@ -92,6 +113,9 @@ class EncryptedJSON(TypeDecorator):
     def process_bind_param(self, value, dialect):
         if value is None:
             return value
+        # FailedSecrets — пустой dict: шифруется как обычное значение. Все места
+        # записи в зашифрованные поля строят НОВЫЙ dict (payload, {**creds, …}),
+        # маркер туда попасть не может.
         return encrypt_value(value)
 
     def process_result_value(self, value, dialect):

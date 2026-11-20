@@ -23,13 +23,21 @@ async def list_accounts(user: User = Depends(get_current_user),
         .where(SocialAccount.user_id == user.id).order_by(SocialAccount.id)
     )).scalars().all()
     out = []
+    any_broken = False
     for a in rows:
         d = AccountOut.model_validate(a).model_dump()
         d["pages"] = [PageOut.model_validate(p).model_dump() for p in a.pages]
+        # флаг у конкретного аккаунта: его токены не расшифровались
+        # (сменился SECRET_KEY/CREDENTIALS_SECRET). Раньше здесь был глобальный
+        # счётчик «хоть что-то не расшифровалось» — он лип и показывал баннер,
+        # даже когда все аккаунты в порядке (например, не читался только LLM-ключ).
+        d["secrets_broken"] = crypto.is_failed(a.credentials)
+        any_broken = any_broken or d["secrets_broken"]
         out.append(d)
-    # true — во время этого запроса какие-то секреты не расшифровались
-    # (сменился SECRET_KEY/CREDENTIALS_SECRET): UI показывает предупреждение
-    return {"list": out, "secrets_broken": crypto.decrypt_failures() > 0}
+    # общий флаг = есть реальные проблемы с токенами аккаунтов (для баннера).
+    # Флаги «ключи не читаются» у несвязанных с публикациями полей (LLM-ключ,
+    # токен бота) приходят из /settings — они показываются подсказками в Настройках.
+    return {"list": out, "secrets_broken": any_broken}
 
 
 @router.post("/connect")
